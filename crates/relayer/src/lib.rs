@@ -1,9 +1,14 @@
+use bitcoin::BlockHash;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::hash_types::Txid;
 use bitcoin::blockdata::script::Builder;
 use bitcoincore_rpc::Client as RpcClient;
 use bitcoincore_rpc::Error;
 use bitcoincore_rpc::Auth;
+use bitcoin::consensus::encode::deserialize;
+use bitcoincore_rpc::RpcApi;
+use bitcoin::blockdata::script as txscript;
+
 
 
 // Implement all functionnalities for Write/Read
@@ -114,6 +119,54 @@ impl Relayer {
     fn reveal_tx(&self, embedded_data: &[u8], commit_hash: &Txid) -> Result<Txid, Error> {
         //TODO
     }
+
+
+    fn ReadTransaction(client: &RpcClient, hash: &Txid) -> Result<Option<Vec<u8>>, Error> {
+        let raw_tx = client.get_raw_transaction(hash, None)?;
+    
+        if let Ok(tx) = deserialize(&raw_tx) {  //TODO: find a way to deserialize
+            if let Some(witness) = tx.input[0].witness.get(1) {
+                if let Some(push_data) = ExtractPushData(0, witness) {
+                    // Skip PROTOCOL_ID
+                    if push_data.starts_with(PROTOCOL_ID) {
+                        return Ok(Some(push_data[PROTOCOL_ID.len()..].to_vec()));
+                    }
+                }
+            }
+        }
+    
+        Ok(None)
+    }
+
+    fn Read(&self, height: u64) -> Result<Vec<Vec<u8>>, Box<dyn core::fmt::Debug>> {
+        let hash = self.client.get_block_hash(height as u64)?;
+        let block = self.client.get_block(&BlockHash::from(hash))?;
+        let mut data = Vec::new();
+
+        for tx in block.txdata.iter() {
+            if let Some(witness) = tx.input[0].witness.nth(1) { //Verify that this is the right way to get the witness
+                if let Some(push_data) = ExtractPushData(0, witness) {
+                    // Skip PROTOCOL_ID
+                    if push_data.starts_with(PROTOCOL_ID) {
+                        data.push(push_data[PROTOCOL_ID.len()..].to_vec());
+                    }
+                }
+            }
+        }
+        Ok(data)
+    }
+
+    fn Write(&self, data: &[u8]) -> Result<Txid, Box<dyn std::error::Error>> {
+        let mut data_with_protocol_id = PROTOCOL_ID.to_vec();
+        data_with_protocol_id.extend_from_slice(data);
+    
+        let address = create_taproot_address(&data_with_protocol_id)?;
+        let commit_hash = self.commit_tx(&address)?;
+        let reveal_hash = self.reveal_tx(data, &commit_hash)?;
+    
+        Ok(reveal_hash)
+    }
+    
 }
 
 struct Config {
@@ -135,4 +188,16 @@ impl Config {
             disable_tls,
         }
     }
+}
+
+struct TemplateMatch {
+    expect_push_data: bool,
+    max_push_datas: usize,
+    opcode: u8,
+    extracted_data: Vec<u8>,
+}
+
+fn ExtractPushData(version: u16, pk_script: &[u8]) -> Option<Vec<u8>> {
+    //TODO
+    None
 }
