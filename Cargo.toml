@@ -1,0 +1,12 @@
+[workspace]
+members = [
+    "crates/relayer",
+]
+
+[workspace.package]
+name = "bitcoin-da"
+repository = "https://github.com/KasarLabs/bitcoin-da"
+edition = "2021"
+
+[workspace.dependencies]
+
