@@ -162,6 +162,29 @@ impl Relayer {
         todo!();
     }
 
+    fn read(&self, height: u64) -> Result<Vec<Vec<u8>>, Box<dyn core::fmt::Debug>> {
+        let hash = self.client.get_block_hash(height);
+        
+        let block = self.client.get_block(&BlockHash::from(hash.unwrap()));
+        let mut data = Vec::new();
+
+        for tx in block.unwrap().txdata.iter() {
+            if let Some(witness) = tx.input[0].witness.nth(1) {
+                
+                if let Some(push_data) = extract_push_data(0, witness.to_vec()) {
+                    
+                    // Skip PROTOCOL_ID
+                    if push_data.starts_with(&PROTOCOL_ID) {
+                        
+                        data.push(push_data[PROTOCOL_ID.len()..].to_vec());
+
+                    }
+                }
+            }
+        }
+        Ok(data)
+    }
+
     fn write(&self, data: &[u8]) -> Result<Txid, BitcoinError> {
         // append id to data
         let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
@@ -199,7 +222,7 @@ impl Config {
             pass,
             http_post_mode,
             disable_tls,
-        }
+        } 
     }
 }
 
