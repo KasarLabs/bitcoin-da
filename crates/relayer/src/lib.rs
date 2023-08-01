@@ -1,6 +1,7 @@
-// use bitcoin::address::Address;
 use bitcoin::address::AddressType;
 use bitcoin::amount::Amount;
+use bitcoin::blockdata::opcodes;
+use bitcoin::blockdata::script as txscript;
 use bitcoin::blockdata::script::Builder;
 use bitcoin::hash_types::Txid;
 use bitcoin::secp256k1::PublicKey;
@@ -9,6 +10,14 @@ use bitcoincore_rpc::Auth;
 use bitcoincore_rpc::Client as RpcClient;
 use bitcoincore_rpc::Error;
 use bitcoincore_rpc::RpcApi;
+
+use bitcoin::consensus::encode::deserialize;
+
+use bitcoin::taproot::LeafVersion;
+use bitcoin::taproot::NodeInfo;
+use bitcoin::taproot::TapTree;
+use bitcoin::BlockHash;
+use bitcoin::ScriptBuf;
 
 use core::fmt;
 use std::str::FromStr;
@@ -109,7 +118,7 @@ struct Relayer {
 impl Relayer {
     // NewRelayer creates a new Relayer instance with the provided Config.
     //TO TEST
-    fn NewRelayer(config: &Config) -> Result<Self, Error> {
+    fn new_relayer(config: &Config) -> Result<Self, Error> {
         // Set up the connection to the bitcoin RPC server.
         let auth = Auth::UserPass(config.user.clone(), config.pass.clone());
         let client = RpcClient::new(&config.host, auth)?;
@@ -192,4 +201,49 @@ impl Config {
             disable_tls,
         }
     }
+}
+
+#[derive(Default)]
+struct TemplateMatch {
+    expect_push_data: bool,
+    max_push_datas: usize,
+    opcode: u8,
+    extracted_data: Vec<u8>,
+}
+
+fn extract_push_data(version: u8, pk_script: Vec<u8>) -> Option<Vec<u8>> {
+    
+    let template = [
+        TemplateMatch { opcode: opcodes::OP_FALSE.to_u8(), ..Default::default() },
+        TemplateMatch { opcode: opcodes::all::OP_IF.to_u8(), ..Default::default() },
+        TemplateMatch { expect_push_data: true, max_push_datas: 10, ..Default::default() },
+        TemplateMatch { opcode: opcodes::all::OP_ENDIF.to_u8(), ..Default::default() },
+        TemplateMatch { expect_push_data: true, max_push_datas: 1, ..Default::default() },
+        TemplateMatch { opcode: opcodes::all::OP_CHECKSIG.to_u8(), ..Default::default() },
+    ];
+
+    let mut template_offset = 0;
+
+    let node_info = NodeInfo::new_leaf_with_ver(ScriptBuf::from_bytes(pk_script), LeafVersion::from_consensus(version).unwrap());
+    let tap_tree = TapTree::try_from(node_info).unwrap();
+    
+    let mut tokenizer = TapTree::script_leaves(&tap_tree);
+
+    while let Some(op) = tokenizer.next() {
+
+        if template_offset >= template.len() {
+            return None;
+        }
+
+        let tpl_entry = &template[template_offset];
+        
+        //To be reviewed on testing
+        if !tpl_entry.expect_push_data && op.script().first_opcode().unwrap().to_u8() != tpl_entry.opcode {
+            return None;
+        }
+
+        template_offset += 1;
+    }
+
+    Some(template[2].extracted_data.clone())
 }
