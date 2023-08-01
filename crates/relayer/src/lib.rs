@@ -236,5 +236,5 @@ fn extract_push_data(version: u8, pk_script: Vec<u8>) -> Option<Vec<u8>> {
         template_offset += 1;
     }
 
-    None
+    Some(template[2].extracted_data.clone())
 }
