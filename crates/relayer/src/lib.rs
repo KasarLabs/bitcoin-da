@@ -1,13 +1,18 @@
 use bitcoin::BlockHash;
+use bitcoin::ScriptBuf;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::hash_types::Txid;
 use bitcoin::blockdata::script::Builder;
+use bitcoin::taproot::LeafVersion;
+use bitcoin::taproot::NodeInfo;
+use bitcoin::taproot::TapTree;
 use bitcoincore_rpc::Client as RpcClient;
 use bitcoincore_rpc::Error;
 use bitcoincore_rpc::Auth;
 use bitcoin::consensus::encode::deserialize;
 use bitcoincore_rpc::RpcApi;
 use bitcoin::blockdata::script as txscript;
+use bitcoin::blockdata::opcodes;
 
 
 
@@ -92,7 +97,7 @@ struct Relayer {
 impl Relayer {
     // NewRelayer creates a new Relayer instance with the provided Config.
     //TO TEST
-    fn NewRelayer(config: &Config) -> Result<Self, Error> {
+    fn new_relayer(config: &Config) -> Result<Self, Error> {
         // Set up the connection to the bitcoin RPC server.
         let auth = Auth::UserPass(config.user.clone(), config.pass.clone());
         let client = RpcClient::new(&config.host, auth)?;
@@ -109,63 +114,63 @@ impl Relayer {
     // output is only spendable by posting the embedded data on chain, as part of
     // the script satisfying the tapscript spend path that commits to the data. It
     // returns the hash of the commit transaction and error, if any.
-    fn commit_tx(&self, addr: &str) -> Result<Txid, Error> {
-        //TODO
-    }
+    // fn commit_tx(&self, addr: &str) -> Result<Txid, Error> {
+    //     //TODO
+    // }
 
     // revealTx spends the output from the commit transaction and as part of the
     // script satisfying the tapscript spend path, posts the embedded data on
     // chain. It returns the hash of the reveal transaction and error, if any.  
-    fn reveal_tx(&self, embedded_data: &[u8], commit_hash: &Txid) -> Result<Txid, Error> {
-        //TODO
-    }
+    // fn reveal_tx(&self, embedded_data: &[u8], commit_hash: &Txid) -> Result<Txid, Error> {
+    //     //TODO
+    // }
 
 
-    fn ReadTransaction(client: &RpcClient, hash: &Txid) -> Result<Option<Vec<u8>>, Error> {
-        let raw_tx = client.get_raw_transaction(hash, None)?;
+    // fn ReadTransaction(client: &RpcClient, hash: &Txid) -> Result<Option<Vec<u8>>, Error> {
+    //     let raw_tx = client.get_raw_transaction(hash, None)?;
     
-        if let Ok(tx) = deserialize(&raw_tx) {  //TODO: find a way to deserialize
-            if let Some(witness) = tx.input[0].witness.get(1) {
-                if let Some(push_data) = ExtractPushData(0, witness) {
-                    // Skip PROTOCOL_ID
-                    if push_data.starts_with(PROTOCOL_ID) {
-                        return Ok(Some(push_data[PROTOCOL_ID.len()..].to_vec()));
-                    }
-                }
-            }
-        }
+    //     if let Ok(tx) = deserialize(&raw_tx) {  //TODO: find a way to deserialize
+    //         if let Some(witness) = tx.input[0].witness.get(1) {
+    //             if let Some(push_data) = ExtractPushData(0, witness) {
+    //                 // Skip PROTOCOL_ID
+    //                 if push_data.starts_with(PROTOCOL_ID) {
+    //                     return Ok(Some(push_data[PROTOCOL_ID.len()..].to_vec()));
+    //                 }
+    //             }
+    //         }
+    //     }
     
-        Ok(None)
-    }
+    //     Ok(None)
+    // }
 
-    fn Read(&self, height: u64) -> Result<Vec<Vec<u8>>, Box<dyn core::fmt::Debug>> {
-        let hash = self.client.get_block_hash(height as u64)?;
-        let block = self.client.get_block(&BlockHash::from(hash))?;
-        let mut data = Vec::new();
+    // fn Read(&self, height: u64) -> Result<Vec<Vec<u8>>, Box<dyn core::fmt::Debug>> {
+    //     let hash = self.client.get_block_hash(height as u64)?;
+    //     let block = self.client.get_block(&BlockHash::from(hash))?;
+    //     let mut data = Vec::new();
 
-        for tx in block.txdata.iter() {
-            if let Some(witness) = tx.input[0].witness.nth(1) { //Verify that this is the right way to get the witness
-                if let Some(push_data) = ExtractPushData(0, witness) {
-                    // Skip PROTOCOL_ID
-                    if push_data.starts_with(PROTOCOL_ID) {
-                        data.push(push_data[PROTOCOL_ID.len()..].to_vec());
-                    }
-                }
-            }
-        }
-        Ok(data)
-    }
+    //     for tx in block.txdata.iter() {
+    //         if let Some(witness) = tx.input[0].witness.nth(1) { //Verify that this is the right way to get the witness
+    //             if let Some(push_data) = ExtractPushData(0, witness) {
+    //                 // Skip PROTOCOL_ID
+    //                 if push_data.starts_with(PROTOCOL_ID) {
+    //                     data.push(push_data[PROTOCOL_ID.len()..].to_vec());
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     Ok(data)
+    // }
 
-    fn Write(&self, data: &[u8]) -> Result<Txid, Box<dyn std::error::Error>> {
-        let mut data_with_protocol_id = PROTOCOL_ID.to_vec();
-        data_with_protocol_id.extend_from_slice(data);
+    // fn Write(&self, data: &[u8]) -> Result<Txid, Box<dyn std::error::Error>> {
+    //     let mut data_with_protocol_id = PROTOCOL_ID.to_vec();
+    //     data_with_protocol_id.extend_from_slice(data);
     
-        let address = create_taproot_address(&data_with_protocol_id)?;
-        let commit_hash = self.commit_tx(&address)?;
-        let reveal_hash = self.reveal_tx(data, &commit_hash)?;
+    //     let address = create_taproot_address(&data_with_protocol_id)?;
+    //     let commit_hash = self.commit_tx(&address)?;
+    //     let reveal_hash = self.reveal_tx(data, &commit_hash)?;
     
-        Ok(reveal_hash)
-    }
+    //     Ok(reveal_hash)
+    // }
     
 }
 
@@ -189,7 +194,7 @@ impl Config {
         }
     }
 }
-
+#[derive(Default)]
 struct TemplateMatch {
     expect_push_data: bool,
     max_push_datas: usize,
@@ -197,7 +202,39 @@ struct TemplateMatch {
     extracted_data: Vec<u8>,
 }
 
-fn ExtractPushData(version: u16, pk_script: &[u8]) -> Option<Vec<u8>> {
-    //TODO
-    None
+fn extract_push_data(version: u8, pk_script: Vec<u8>) -> Option<Vec<u8>> {
+    
+    let template = [
+        TemplateMatch { opcode: opcodes::OP_FALSE.to_u8(), ..Default::default() },
+        TemplateMatch { opcode: opcodes::all::OP_IF.to_u8(), ..Default::default() },
+        TemplateMatch { expect_push_data: true, max_push_datas: 10, ..Default::default() },
+        TemplateMatch { opcode: opcodes::all::OP_ENDIF.to_u8(), ..Default::default() },
+        TemplateMatch { expect_push_data: true, max_push_datas: 1, ..Default::default() },
+        TemplateMatch { opcode: opcodes::all::OP_CHECKSIG.to_u8(), ..Default::default() },
+    ];
+
+    let mut template_offset = 0;
+
+    let node_info = NodeInfo::new_leaf_with_ver(ScriptBuf::from_bytes(pk_script), LeafVersion::from_consensus(version).unwrap());
+    let tap_tree = TapTree::try_from(node_info).unwrap();
+    
+    let mut tokenizer = TapTree::script_leaves(&tap_tree);
+
+    while let Some(op) = tokenizer.next() {
+
+        if template_offset >= template.len() {
+            return None;
+        }
+
+        let tpl_entry = &template[template_offset];
+        
+        //To be reviewed on testing
+        if !tpl_entry.expect_push_data && op.script().first_opcode().unwrap().to_u8() != tpl_entry.opcode {
+            return None;
+        }
+
+        template_offset += 1;
+    }
+
+    Some(template[2].extracted_data.clone())
 }
