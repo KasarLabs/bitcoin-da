@@ -15,7 +15,7 @@ use std::str::FromStr;
 
 // Implement all functionnalities for Write/Read
 
-const PROTOCOL_ID: &[u8] = &[0x72, 0x6f, 0x6c, 0x6c];
+const PROTOCOL_ID: [u8; 4] = [0x62, 0x61, 0x72, 0x6b]; // 'bark' in ASCII
 
 // Sample data and keys for testing.
 // bob key pair is used for signing reveal tx
@@ -154,9 +154,15 @@ impl Relayer {
     }
 
     fn write(&self, data: &[u8]) -> Result<Txid, BitcoinError> {
-        let address = create_taproot_address(data)?;
+        // append id to data
+        let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
+        data_with_id.extend_from_slice(data);
+        // create address with data in script
+        let address: String = create_taproot_address(&data_with_id)?;
+        // Perform commit transaction with fees which create the UTXO
         let hash: Txid = self.commit_tx(&address)?;
-        let hash2: Txid = self.reveal_tx(data, &hash)?;
+        // Spend the UTXO and reveal the scipt hence data.
+        let hash2: Txid = self.reveal_tx(&data_with_id, &hash)?;
         Ok(hash2)
     }
 }
