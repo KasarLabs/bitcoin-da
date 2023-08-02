@@ -1,53 +1,32 @@
-use bitcoin::address::AddressType;
-use bitcoin::amount::Amount;
-use bitcoin::blockdata::opcodes;
-use bitcoin::blockdata::script as txscript;
-use bitcoin::blockdata::script::Builder;
-use bitcoin::hash_types::Txid;
+use bitcoin::BlockHash;
+use bitcoin::hashes::Hash;
+use bitcoin::script::PushBytes;
+use bitcoin::script::PushBytesBuf;
+use bitcoin::secp256k1::All;
 use bitcoin::secp256k1::PublicKey;
-use bitcoin::{Address, Network};
-use bitcoincore_rpc::Auth;
+use bitcoin::hash_types::Txid;
+use bitcoin::secp256k1::Secp256k1;
+use bitcoin::secp256k1::schnorr;
 use bitcoincore_rpc::Client as RpcClient;
 use bitcoincore_rpc::Error;
-use bitcoincore_rpc::RpcApi;
-
+use bitcoincore_rpc::Auth;
 use bitcoin::consensus::encode::deserialize;
+use bitcoincore_rpc::RpcApi;
+use bitcoin::script as txscript;
+use bitcoin::key::PrivateKey;
+use bitcoin::opcodes;
 
-use bitcoin::taproot::LeafVersion;
-use bitcoin::taproot::NodeInfo;
-use bitcoin::taproot::TapTree;
-use bitcoin::BlockHash;
-use bitcoin::ScriptBuf;
 
-use core::fmt;
-use std::str::FromStr;
 
 // Implement all functionnalities for Write/Read
 
-const PROTOCOL_ID: [u8; 4] = [0x62, 0x61, 0x72, 0x6b]; // 'bark' in ASCII
+const PROTOCOL_ID: &[u8] = &[0x72, 0x6f, 0x6c, 0x6c];
 
 // Sample data and keys for testing.
 // bob key pair is used for signing reveal tx
 // internal key pair is used for tweaking
 const BOB_PRIVATE_KEY: &str = "5JoQtsKQuH8hC9MyvfJAqo6qmKLm8ePYNucs7tPu2YxG12trzBt";
 const INTERNAL_PRIVATE_KEY: &str = "5JGgKfRy6vEcWBpLJV5FXUfMGNXzvdWzQHUM1rVLEUJfvZUSwvS";
-
-pub enum BitcoinError {
-    InvalidAddress,
-    SendToAddressError,
-    BadAmount,
-}
-
-// Implement the Display trait for custom error
-impl fmt::Display for BitcoinError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            BitcoinError::InvalidAddress => write!(f, "Invalid address"),
-            BitcoinError::SendToAddressError => write!(f, "Send to address error"),
-            BitcoinError::BadAmount => write!(f, "Amount parsing error"),
-        }
-    }
-}
 
 // chunk_slice splits input slice into max chunk_size length slices
 fn chunk_slice(slice: &[u8], chunk_size: usize) -> Vec<&[u8]> {
@@ -58,7 +37,11 @@ fn chunk_slice(slice: &[u8], chunk_size: usize) -> Vec<&[u8]> {
 
         // necessary check to avoid slicing beyond
         // slice capacity
-        let end = if end > slice.len() { slice.len() } else { end };
+        let end = if end > slice.len() {
+            slice.len()
+        } else {
+            end
+        };
 
         chunks.push(&slice[i..end]);
         i = end;
@@ -71,9 +54,27 @@ fn chunk_slice(slice: &[u8], chunk_size: usize) -> Vec<&[u8]> {
 // a single leaf containing the spend path with the script:
 // <embedded data> OP_DROP <pubkey> OP_CHECKSIG
 // TODO
-fn create_taproot_address(embedded_data: &[u8]) -> Result<String, BitcoinError> {
+fn create_taproot_address(embedded_data: &[u8]) -> Result<String, bitcoin::key::Error> {
     // Step 1: Decode bobPrivateKey as WIF
-
+    let priv_key = PrivateKey::from_wif(BOB_PRIVATE_KEY);
+    match priv_key {
+        Ok(priv_key) => {
+            let pub_key = priv_key.public_key(&Secp256k1::<All>::new());
+            let mut builder = txscript::Builder::new();
+            builder = builder.push_opcode(opcodes::OP_0);
+            builder = builder.push_opcode(opcodes::all::OP_IF);
+            let chunks = chunk_slice(embedded_data, 520);
+            for chunk in chunks {
+                // try to use PushBytes::from(chunk)
+                builder = builder.push_slice(PushBytesBuf::try_from(chunk.to_vec()).unwrap());
+            }
+            builder = builder.push_opcode(opcodes::all::OP_ENDIF);
+            builder.push_slice(serialize(pub_key))
+        },
+        Err(err) => {
+            return Err(err);
+        }
+    }
     // Step 2: Get the corresponding public key from the WIF private key
 
     // Step 3: Build the Taproot script with a single leaf
@@ -94,12 +95,10 @@ fn create_taproot_address(embedded_data: &[u8]) -> Result<String, BitcoinError> 
 // pay_to_taproot_script creates a pk script for a pay-to-taproot output key.
 // TODO
 pub fn pay_to_taproot_script(taproot_key: &PublicKey) -> Result<Vec<u8>, String> {
-    let builder = Builder::new();
+    let builder = txscript::Builder::new();
 
     // OP_1 is equivalent to OP_TRUE in Bitcoin Script.
-    builder
-        .clone()
-        .push_opcode(bitcoin::blockdata::opcodes::OP_TRUE);
+    builder.clone().push_opcode(bitcoin::blockdata::opcodes::OP_TRUE);
 
     builder.clone().push_slice(&taproot_key.serialize());
 
@@ -115,158 +114,115 @@ struct Relayer {
     client: RpcClient,
 }
 
-impl Relayer {
-    // NewRelayer creates a new Relayer instance with the provided Config.
-    //TO TEST
-    fn new_relayer(config: &Config) -> Result<Self, Error> {
-        // Set up the connection to the bitcoin RPC server.
-        let auth = Auth::UserPass(config.user.clone(), config.pass.clone());
-        let client = RpcClient::new(&config.host, auth)?;
+// impl Relayer {
+//     // NewRelayer creates a new Relayer instance with the provided Config.
+//     //TO TEST
+//     fn NewRelayer(config: &Config) -> Result<Self, Error> {
+//         // Set up the connection to the bitcoin RPC server.
+//         let auth = Auth::UserPass(config.user.clone(), config.pass.clone());
+//         let client = RpcClient::new(&config.host, auth)?;
 
-        Ok(Relayer { client })
-    }
+//         Ok(Relayer { client })
+//     }
 
-    // close shuts down the client.
-    fn close(&self) {
-        //TODO
-    }
+//     // close shuts down the client.
+//     fn close(&self) {
+//         //TODO
+//     }
 
-    // commitTx commits an output to the given taproot address, such that the
-    // output is only spendable by posting the embedded data on chain, as part of
-    // the script satisfying the tapscript spend path that commits to the data. It
-    // returns the hash of the commit transaction and error, if any.
-    fn commit_tx(&self, addr: &str) -> Result<Txid, BitcoinError> {
-        let address: Address = Address::from_str(addr)
-            .map_err(|_| BitcoinError::InvalidAddress)?
-            .assume_checked();
-        // .require_network(Network::Bitcoin)
-        match address.address_type() {
-            Some(AddressType::P2tr) => {
-                // fee to cover the cost
-                let amount = Amount::from_btc(0.0001).map_err(|_| BitcoinError::BadAmount)?;
-                let hash: Txid = self
-                    .client
-                    .send_to_address(&address, amount, None, None, None, None, None, None)
-                    .map_err(|_| BitcoinError::SendToAddressError)?;
-                Ok(hash)
-            }
-            _ => Err(BitcoinError::InvalidAddress),
-        }
-    }
+//     // commitTx commits an output to the given taproot address, such that the
+//     // output is only spendable by posting the embedded data on chain, as part of
+//     // the script satisfying the tapscript spend path that commits to the data. It
+//     // returns the hash of the commit transaction and error, if any.
+//     fn commit_tx(&self, addr: &str) -> Result<Txid, Error> {
+//         //TODO
+//     }
 
-    // revealTx spends the output from the commit transaction and as part of the
-    // script satisfying the tapscript spend path, posts the embedded data on
-    // chain. It returns the hash of the reveal transaction and error, if any.
-    fn reveal_tx(&self, embedded_data: &[u8], commit_hash: &Txid) -> Result<Txid, BitcoinError> {
-        //TODO
-        todo!();
-    }
+//     // revealTx spends the output from the commit transaction and as part of the
+//     // script satisfying the tapscript spend path, posts the embedded data on
+//     // chain. It returns the hash of the reveal transaction and error, if any.  
+//     fn reveal_tx(&self, embedded_data: &[u8], commit_hash: &Txid) -> Result<Txid, Error> {
+//         //TODO
+//     }
 
-    fn read(&self, height: u64) -> Result<Vec<Vec<u8>>, Box<dyn core::fmt::Debug>> {
-        let hash = self.client.get_block_hash(height);
-        
-        let block = self.client.get_block(&BlockHash::from(hash.unwrap()));
-        let mut data = Vec::new();
 
-        for tx in block.unwrap().txdata.iter() {
-            if let Some(witness) = tx.input[0].witness.nth(1) {
-                
-                if let Some(push_data) = extract_push_data(0, witness.to_vec()) {
-                    
-                    // Skip PROTOCOL_ID
-                    if push_data.starts_with(&PROTOCOL_ID) {
-                        
-                        data.push(push_data[PROTOCOL_ID.len()..].to_vec());
-
-                    }
-                }
-            }
-        }
-        Ok(data)
-    }
-
-    fn write(&self, data: &[u8]) -> Result<Txid, BitcoinError> {
-        // append id to data
-        let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
-        data_with_id.extend_from_slice(data);
-        // create address with data in script
-        let address: String = create_taproot_address(&data_with_id)?;
-        // Perform commit transaction with fees which create the UTXO
-        let hash: Txid = self.commit_tx(&address)?;
-        // Spend the UTXO and reveal the scipt hence data.
-        let hash2: Txid = self.reveal_tx(&data_with_id, &hash)?;
-        Ok(hash2)
-    }
-}
-
-struct Config {
-    host: String,
-    user: String,
-    pass: String,
-    http_post_mode: bool,
-    disable_tls: bool,
-}
-
-impl Config {
-    // Constructor to create a new Config instance
-    fn new(
-        host: String,
-        user: String,
-        pass: String,
-        http_post_mode: bool,
-        disable_tls: bool,
-    ) -> Self {
-        Config {
-            host,
-            user,
-            pass,
-            http_post_mode,
-            disable_tls,
-        } 
-    }
-}
-
-#[derive(Default)]
-struct TemplateMatch {
-    expect_push_data: bool,
-    max_push_datas: usize,
-    opcode: u8,
-    extracted_data: Vec<u8>,
-}
-
-fn extract_push_data(version: u8, pk_script: Vec<u8>) -> Option<Vec<u8>> {
+//     fn ReadTransaction(client: &RpcClient, hash: &Txid) -> Result<Option<Vec<u8>>, Error> {
+//         let raw_tx = client.get_raw_transaction(hash, None)?;
     
-    let template = [
-        TemplateMatch { opcode: opcodes::OP_FALSE.to_u8(), ..Default::default() },
-        TemplateMatch { opcode: opcodes::all::OP_IF.to_u8(), ..Default::default() },
-        TemplateMatch { expect_push_data: true, max_push_datas: 10, ..Default::default() },
-        TemplateMatch { opcode: opcodes::all::OP_ENDIF.to_u8(), ..Default::default() },
-        TemplateMatch { expect_push_data: true, max_push_datas: 1, ..Default::default() },
-        TemplateMatch { opcode: opcodes::all::OP_CHECKSIG.to_u8(), ..Default::default() },
-    ];
-
-    let mut template_offset = 0;
-
-    let node_info = NodeInfo::new_leaf_with_ver(ScriptBuf::from_bytes(pk_script), LeafVersion::from_consensus(version).unwrap());
-    let tap_tree = TapTree::try_from(node_info).unwrap();
+//         if let Ok(tx) = deserialize(&raw_tx) {  //TODO: find a way to deserialize
+//             if let Some(witness) = tx.input[0].witness.get(1) {
+//                 if let Some(push_data) = ExtractPushData(0, witness) {
+//                     // Skip PROTOCOL_ID
+//                     if push_data.starts_with(PROTOCOL_ID) {
+//                         return Ok(Some(push_data[PROTOCOL_ID.len()..].to_vec()));
+//                     }
+//                 }
+//             }
+//         }
     
-    let mut tokenizer = TapTree::script_leaves(&tap_tree);
+//         Ok(None)
+//     }
 
-    while let Some(op) = tokenizer.next() {
+//     fn Read(&self, height: u64) -> Result<Vec<Vec<u8>>, Box<dyn core::fmt::Debug>> {
+//         let hash = self.client.get_block_hash(height as u64)?;
+//         let block = self.client.get_block(&BlockHash::from(hash))?;
+//         let mut data = Vec::new();
 
-        if template_offset >= template.len() {
-            return None;
-        }
+//         for tx in block.txdata.iter() {
+//             if let Some(witness) = tx.input[0].witness.nth(1) { //Verify that this is the right way to get the witness
+//                 if let Some(push_data) = ExtractPushData(0, witness) {
+//                     // Skip PROTOCOL_ID
+//                     if push_data.starts_with(PROTOCOL_ID) {
+//                         data.push(push_data[PROTOCOL_ID.len()..].to_vec());
+//                     }
+//                 }
+//             }
+//         }
+//         Ok(data)
+//     }
 
-        let tpl_entry = &template[template_offset];
-        
-        //To be reviewed on testing
-        if !tpl_entry.expect_push_data && op.script().first_opcode().unwrap().to_u8() != tpl_entry.opcode {
-            return None;
-        }
+//     fn Write(&self, data: &[u8]) -> Result<Txid, Box<dyn std::error::Error>> {
+//         let mut data_with_protocol_id = PROTOCOL_ID.to_vec();
+//         data_with_protocol_id.extend_from_slice(data);
+    
+//         let address = create_taproot_address(&data_with_protocol_id)?;
+//         let commit_hash = self.commit_tx(&address)?;
+//         let reveal_hash = self.reveal_tx(data, &commit_hash)?;
+    
+//         Ok(reveal_hash)
+//     }
+    
+// }
 
-        template_offset += 1;
-    }
+// struct Config {
+//     host: String,
+//     user: String,
+//     pass: String,
+//     http_post_mode: bool,
+//     disable_tls: bool,
+// }
 
-    Some(template[2].extracted_data.clone())
-}
+// impl Config {
+//     // Constructor to create a new Config instance
+//     fn new(host: String, user: String, pass: String, http_post_mode: bool, disable_tls: bool) -> Self {
+//         Config {
+//             host,
+//             user,
+//             pass,
+//             http_post_mode,
+//             disable_tls,
+//         }
+//     }
+// }
+
+// struct TemplateMatch {
+//     expect_push_data: bool,
+//     max_push_datas: usize,
+//     opcode: u8,
+//     extracted_data: Vec<u8>,
+// }
+
+// fn ExtractPushData(version: u16, pk_script: &[u8]) -> Option<Vec<u8>> {
+//     //TODO
+//     None
+// }
