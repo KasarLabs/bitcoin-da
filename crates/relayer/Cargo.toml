@@ -9,4 +9,5 @@ targets = ["x86_64-unknown-linux-gnu"]
 [dependencies]
 bitcoin = { workspace = true }
 bitcoincore-rpc = { workspace = true }
+serde = { workspace = true }
 

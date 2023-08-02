@@ -1,17 +1,12 @@
 use bitcoin::BlockHash;
-use bitcoin::hashes::Hash;
-use bitcoin::script::PushBytes;
 use bitcoin::script::PushBytesBuf;
 use bitcoin::secp256k1::XOnlyPublicKey;
-use bitcoin::secp256k1::{All, PublicKey, Secp256k1, schnorr};
+use bitcoin::secp256k1::{All, PublicKey, Secp256k1};
 use bitcoin::hash_types::Txid;
-use bitcoin::taproot::TapLeaf;
 use bitcoin::taproot::TaprootBuilder;
-use bitcoin::taproot::TaprootSpendInfo;
 use bitcoincore_rpc::Client as RpcClient;
 use bitcoincore_rpc::Error;
 use bitcoincore_rpc::Auth;
-use bitcoin::consensus::encode::deserialize;
 use bitcoincore_rpc::RpcApi;
 use bitcoin::script as txscript;
 use bitcoin::key::PrivateKey;
@@ -24,9 +19,9 @@ use bitcoin::taproot::LeafVersion;
 use bitcoin::taproot::NodeInfo;
 use bitcoin::taproot::TapTree;
 use bitcoin::ScriptBuf;
-
 use core::fmt;
 use std::str::FromStr;
+
 
 // Implement all functionnalities for Write/Read
 
@@ -42,6 +37,7 @@ pub enum BitcoinError {
     InvalidAddress,
     SendToAddressError,
     BadAmount,
+    InvalidTxHash,
 }
 
 // Implement the Display trait for custom error
@@ -51,6 +47,7 @@ impl fmt::Display for BitcoinError {
             BitcoinError::InvalidAddress => write!(f, "Invalid address"),
             BitcoinError::SendToAddressError => write!(f, "Send to address error"),
             BitcoinError::BadAmount => write!(f, "Amount parsing error"),
+            BitcoinError::InvalidTxHash => write!(f, "Invalid transaction hash")
         }
     }
 }
@@ -190,6 +187,30 @@ impl Relayer {
         todo!();
     }
 
+    pub fn read_transaction(&self, hash: &Txid) -> Result<Vec<u8>, BitcoinError> {
+        let tx = match self.client.get_raw_transaction(hash, None) {
+            Ok(bytes) => bytes,
+            Err(err) => return Err(BitcoinError::InvalidTxHash),
+        };
+    
+        if tx.input[0].witness.len() > 1 {
+            let witness = &tx.input[0].witness;
+            let witness = witness[1].to_vec(); // Convert &[u8] to Vec<u8>
+            let push_data = match extract_push_data(0, witness) {
+                Some(data) => data,
+                None => return Err(BitcoinError::InvalidTxHash),
+            };
+    
+            let protocol_id_ref: &[u8] = &PROTOCOL_ID;
+            if push_data.starts_with(protocol_id_ref) {
+                return Ok(push_data[PROTOCOL_ID.len()..].to_vec());
+            }
+        }
+    
+        Err(BitcoinError::InvalidTxHash)
+    }
+    
+    
     fn read(&self, height: u64) -> Result<Vec<Vec<u8>>, Box<dyn core::fmt::Debug>> {
         let hash = self.client.get_block_hash(height);
         

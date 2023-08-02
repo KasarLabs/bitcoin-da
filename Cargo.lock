@@ -188,6 +188,7 @@ version = "0.1.0"
 dependencies = [
  "bitcoin",
  "bitcoincore-rpc",
+ "serde",
 ]
 
 [[package]]
