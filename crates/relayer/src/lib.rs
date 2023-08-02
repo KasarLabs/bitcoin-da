@@ -37,6 +37,7 @@ pub enum BitcoinError {
     InvalidAddress,
     SendToAddressError,
     BadAmount,
+    PrivateKeyErr,
     InvalidTxHash,
 }
 
@@ -47,13 +48,15 @@ impl fmt::Display for BitcoinError {
             BitcoinError::InvalidAddress => write!(f, "Invalid address"),
             BitcoinError::SendToAddressError => write!(f, "Send to address error"),
             BitcoinError::BadAmount => write!(f, "Amount parsing error"),
-            BitcoinError::InvalidTxHash => write!(f, "Invalid transaction hash")
+            BitcoinError::PrivateKeyErr => write!(f, "Private key error"),
+            BitcoinError::InvalidTxHash => write!(f, "Invalid transaction hash"),
         }
     }
 }
 
+
 // chunk_slice splits input slice into max chunk_size length slices
-fn chunk_slice(slice: &[u8], chunk_size: usize) -> Vec<&[u8]> {
+pub fn chunk_slice(slice: &[u8], chunk_size: usize) -> Vec<&[u8]> {
     let mut chunks = Vec::new();
     let mut i = 0;
     while i < slice.len() {
@@ -78,7 +81,7 @@ fn chunk_slice(slice: &[u8], chunk_size: usize) -> Vec<&[u8]> {
 // a single leaf containing the spend path with the script:
 // <embedded data> OP_DROP <pubkey> OP_CHECKSIG
 // TODO
-fn create_taproot_address(embedded_data: &[u8]) -> Result<String, bitcoin::key::Error> {
+pub fn create_taproot_address(embedded_data: &[u8]) -> Result<String, BitcoinError> {
     let priv_key = PrivateKey::from_wif(BOB_PRIVATE_KEY);
     match priv_key {
         Ok(priv_key) => {
@@ -110,9 +113,7 @@ fn create_taproot_address(embedded_data: &[u8]) -> Result<String, bitcoin::key::
                 Address::p2tr_tweaked(output_key, Network::Bitcoin).to_string()
             );
         },
-        Err(err) => {
-            return Err(err);
-        }
+        _ => Err(BitcoinError::PrivateKeyErr),
     }
 }
 
@@ -136,15 +137,17 @@ pub fn pay_to_taproot_script(taproot_key: &PublicKey) -> Result<Vec<u8>, String>
 
 // Relayer is a bitcoin client wrapper which provides reader and writer methods
 // to write binary blobs to the blockchain.
-struct Relayer {
+pub struct Relayer {
     client: RpcClient,
 }
 
 impl Relayer {
     // NewRelayer creates a new Relayer instance with the provided Config.
     //TO TEST
-    fn new_relayer(config: &Config) -> Result<Self, Error> {
+    pub fn new_relayer(config: &Config) -> Result<Self, Error> {
         // Set up the connection to the bitcoin RPC server.
+        // NOTE: for testing bitcoind can be used in regtest with the following params -
+	    // bitcoind -chain=regtest -rpcport=18332 -rpcuser=rpcuser -rpcpassword=rpcpass -fallbackfee=0.000001 -txindex=1
         let auth = Auth::UserPass(config.user.clone(), config.pass.clone());
         let client = RpcClient::new(&config.host, auth)?;
 
@@ -152,15 +155,23 @@ impl Relayer {
     }
 
     // close shuts down the client.
-    fn close(&self) {
-        //TODO
+    pub fn close(&self) {
+        let shutdown = self.client.stop();
+        match shutdown {
+            Ok(stopMessage) => {
+                println!("Shutdown client : {}", stopMessage);
+            }
+            Err(error) => {
+                println!("Failed to stop client : {}", error);
+            }
+        }
     }
 
     // commitTx commits an output to the given taproot address, such that the
     // output is only spendable by posting the embedded data on chain, as part of
     // the script satisfying the tapscript spend path that commits to the data. It
     // returns the hash of the commit transaction and error, if any.
-    fn commit_tx(&self, addr: &str) -> Result<Txid, BitcoinError> {
+    pub fn commit_tx(&self, addr: &str) -> Result<Txid, BitcoinError> {
         let address: Address = Address::from_str(addr)
             .map_err(|_| BitcoinError::InvalidAddress)?
             .assume_checked();
@@ -182,7 +193,7 @@ impl Relayer {
     // revealTx spends the output from the commit transaction and as part of the
     // script satisfying the tapscript spend path, posts the embedded data on
     // chain. It returns the hash of the reveal transaction and error, if any.
-    fn reveal_tx(&self, embedded_data: &[u8], commit_hash: &Txid) -> Result<Txid, BitcoinError> {
+    pub fn reveal_tx(&self, embedded_data: &[u8], commit_hash: &Txid) -> Result<Txid, BitcoinError> {
         //TODO
         todo!();
     }
@@ -211,7 +222,7 @@ impl Relayer {
     }
     
     
-    fn read(&self, height: u64) -> Result<Vec<Vec<u8>>, Box<dyn core::fmt::Debug>> {
+    pub fn read(&self, height: u64) -> Result<Vec<Vec<u8>>, Box<dyn core::fmt::Debug>> {
         let hash = self.client.get_block_hash(height);
         
         let block = self.client.get_block(&BlockHash::from(hash.unwrap()));
@@ -234,7 +245,7 @@ impl Relayer {
         Ok(data)
     }
 
-    fn write(&self, data: &[u8]) -> Result<Txid, BitcoinError> {
+    pub fn write(&self, data: &[u8]) -> Result<Txid, BitcoinError> {
         // append id to data
         let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
         data_with_id.extend_from_slice(data);
@@ -248,7 +259,7 @@ impl Relayer {
     }
 }
 
-struct Config {
+pub struct Config {
     host: String,
     user: String,
     pass: String,
@@ -258,7 +269,7 @@ struct Config {
 
 impl Config {
     // Constructor to create a new Config instance
-    fn new(
+    pub fn new(
         host: String,
         user: String,
         pass: String,
@@ -276,14 +287,14 @@ impl Config {
 }
 
 #[derive(Default)]
-struct TemplateMatch {
+pub struct TemplateMatch {
     expect_push_data: bool,
     max_push_datas: usize,
     opcode: u8,
     extracted_data: Vec<u8>,
 }
 
-fn extract_push_data(version: u8, pk_script: Vec<u8>) -> Option<Vec<u8>> {
+pub fn extract_push_data(version: u8, pk_script: Vec<u8>) -> Option<Vec<u8>> {
     
     let template = [
         TemplateMatch { opcode: opcodes::OP_FALSE.to_u8(), ..Default::default() },
