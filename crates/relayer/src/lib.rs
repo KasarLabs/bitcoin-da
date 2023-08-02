@@ -1,22 +1,28 @@
-use bitcoin::address::AddressType;
-use bitcoin::amount::Amount;
-use bitcoin::blockdata::opcodes;
-use bitcoin::blockdata::script as txscript;
-use bitcoin::blockdata::script::Builder;
+use bitcoin::BlockHash;
+use bitcoin::hashes::Hash;
+use bitcoin::script::PushBytes;
+use bitcoin::script::PushBytesBuf;
+use bitcoin::secp256k1::XOnlyPublicKey;
+use bitcoin::secp256k1::{All, PublicKey, Secp256k1, schnorr};
 use bitcoin::hash_types::Txid;
-use bitcoin::secp256k1::PublicKey;
-use bitcoin::{Address, Network};
-use bitcoincore_rpc::Auth;
+use bitcoin::taproot::TapLeaf;
+use bitcoin::taproot::TaprootBuilder;
+use bitcoin::taproot::TaprootSpendInfo;
 use bitcoincore_rpc::Client as RpcClient;
 use bitcoincore_rpc::Error;
-use bitcoincore_rpc::RpcApi;
-
+use bitcoincore_rpc::Auth;
 use bitcoin::consensus::encode::deserialize;
-
+use bitcoincore_rpc::RpcApi;
+use bitcoin::script as txscript;
+use bitcoin::key::PrivateKey;
+use bitcoin::opcodes;
+use bitcoin::address::AddressType;
+use bitcoin::amount::Amount;
+use bitcoin::blockdata::script::Builder;
+use bitcoin::{Address, Network};
 use bitcoin::taproot::LeafVersion;
 use bitcoin::taproot::NodeInfo;
 use bitcoin::taproot::TapTree;
-use bitcoin::BlockHash;
 use bitcoin::ScriptBuf;
 
 use core::fmt;
@@ -58,7 +64,11 @@ fn chunk_slice(slice: &[u8], chunk_size: usize) -> Vec<&[u8]> {
 
         // necessary check to avoid slicing beyond
         // slice capacity
-        let end = if end > slice.len() { slice.len() } else { end };
+        let end = if end > slice.len() {
+            slice.len()
+        } else {
+            end
+        };
 
         chunks.push(&slice[i..end]);
         i = end;
@@ -71,24 +81,42 @@ fn chunk_slice(slice: &[u8], chunk_size: usize) -> Vec<&[u8]> {
 // a single leaf containing the spend path with the script:
 // <embedded data> OP_DROP <pubkey> OP_CHECKSIG
 // TODO
-fn create_taproot_address(embedded_data: &[u8]) -> Result<String, BitcoinError> {
-    // Step 1: Decode bobPrivateKey as WIF
+fn create_taproot_address(embedded_data: &[u8]) -> Result<String, bitcoin::key::Error> {
+    let priv_key = PrivateKey::from_wif(BOB_PRIVATE_KEY);
+    match priv_key {
+        Ok(priv_key) => {
+            let secp = & Secp256k1::<All>::new();
+            let pub_key = priv_key.public_key(secp);
+            let mut builder = txscript::Builder::new();
+            builder = builder.push_opcode(opcodes::OP_0);
+            builder = builder.push_opcode(opcodes::all::OP_IF);
+            let chunks = chunk_slice(embedded_data, 520);
+            for chunk in chunks {
+                // try to use PushBytes::from(chunk)
+                builder = builder.push_slice(PushBytesBuf::try_from(chunk.to_vec()).unwrap());
+            }
+            builder = builder.push_opcode(opcodes::all::OP_ENDIF);
+            builder = builder.push_slice(&pub_key.inner.serialize());
+            builder = builder.push_opcode(opcodes::all::OP_CHECKSIG);
+            let pk_script = builder.as_script();
+            
+            // let tap_leaf = TapLeaf::Script(pk_script.to_owned(), LeafVersion::TapScript);
+            let mut taproot_builder = TaprootBuilder::new();
+            taproot_builder = taproot_builder.add_leaf(0, ScriptBuf::from_bytes(pk_script.to_bytes())).unwrap();
 
-    // Step 2: Get the corresponding public key from the WIF private key
+            let internal_pkey = PrivateKey::from_wif(INTERNAL_PRIVATE_KEY).unwrap();
+            let internal_pub_key = internal_pkey.public_key(secp);
+            let tap_tree = taproot_builder.finalize(secp, XOnlyPublicKey::from(internal_pub_key.inner)).unwrap();
+            let output_key = tap_tree.output_key();
 
-    // Step 3: Build the Taproot script with a single leaf
-
-    // Step 4: Get the corresponding internal public key from internalPrivateKey
-
-    // Step 5: Build the Taproot script tree
-
-    // Step 6: Generate the Taproot output key
-
-    // Step 7: Generate the Bech32m address
-
-    // Step 8: Return the generated Taproot address
-
-    Ok("Nothing for now".to_string())
+            return Ok(
+                Address::p2tr_tweaked(output_key, Network::Bitcoin).to_string()
+            );
+        },
+        Err(err) => {
+            return Err(err);
+        }
+    }
 }
 
 // pay_to_taproot_script creates a pk script for a pay-to-taproot output key.
