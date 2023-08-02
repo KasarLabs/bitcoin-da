@@ -38,6 +38,7 @@ pub enum BitcoinError {
     SendToAddressError,
     BadAmount,
     PrivateKeyErr,
+    InvalidTxHash,
 }
 
 // Implement the Display trait for custom error
@@ -48,6 +49,7 @@ impl fmt::Display for BitcoinError {
             BitcoinError::SendToAddressError => write!(f, "Send to address error"),
             BitcoinError::BadAmount => write!(f, "Amount parsing error"),
             BitcoinError::PrivateKeyErr => write!(f, "Private key error"),
+            BitcoinError::InvalidTxHash => write!(f, "Invalid transaction hash"),
         }
     }
 }
