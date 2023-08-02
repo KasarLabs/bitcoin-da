@@ -38,6 +38,23 @@ const PROTOCOL_ID: [u8; 4] = [0x62, 0x61, 0x72, 0x6b]; // 'bark' in ASCII
 const BOB_PRIVATE_KEY: &str = "5JoQtsKQuH8hC9MyvfJAqo6qmKLm8ePYNucs7tPu2YxG12trzBt";
 const INTERNAL_PRIVATE_KEY: &str = "5JGgKfRy6vEcWBpLJV5FXUfMGNXzvdWzQHUM1rVLEUJfvZUSwvS";
 
+pub enum BitcoinError {
+    InvalidAddress,
+    SendToAddressError,
+    BadAmount,
+}
+
+// Implement the Display trait for custom error
+impl fmt::Display for BitcoinError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            BitcoinError::InvalidAddress => write!(f, "Invalid address"),
+            BitcoinError::SendToAddressError => write!(f, "Send to address error"),
+            BitcoinError::BadAmount => write!(f, "Amount parsing error"),
+        }
+    }
+}
+
 // chunk_slice splits input slice into max chunk_size length slices
 fn chunk_slice(slice: &[u8], chunk_size: usize) -> Vec<&[u8]> {
     let mut chunks = Vec::new();
