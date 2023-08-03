@@ -1,7 +1,7 @@
-use relayer::{pay_to_taproot_script, Config};
-use bitcoin::{secp256k1::PublicKey, error};
-use relayer::Relayer;
+use bitcoin::{error, secp256k1::PublicKey};
 use hex;
+use relayer::Relayer;
+use relayer::{pay_to_taproot_script, Config};
 
 #[test]
 fn test_relayer_write() {
@@ -10,7 +10,7 @@ fn test_relayer_write() {
         "rpcuser".to_owned(),
         "rpcpass".to_owned(),
         true,
-        true
+        true,
     ));
     match new_relayer {
         Ok(relayer) => {
@@ -31,8 +31,6 @@ fn test_relayer_write() {
             eprintln!("Relayer failed : {}", error)
         }
     }
-
-}
 
 #[test]
 fn test_relayer_read() {
@@ -90,18 +88,17 @@ fn test_relayer_read() {
             return;
         }
     }
-
 }
 
 fn main() {
     // Assuming you have a valid public key.
-    let taproot_key = PublicKey::from_slice(&[0x02]).unwrap();
-    
-    match pay_to_taproot_script(&taproot_key) {
+    let taproot_key = PublicKey::from_slice(&[0x02]).unwrap().x_only_public_key();
+
+    match pay_to_taproot_script(&taproot_key.0) {
         Ok(script) => {
             // Do something with the script
             println!("Pay-to-taproot script: {:?}", script);
-        },
+        }
         Err(err) => {
             // Handle the error
             eprintln!("Error: {}", err);
