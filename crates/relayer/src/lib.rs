@@ -1,3 +1,4 @@
+use bitcoin::{BlockHash, error};
 use bitcoin::absolute::LockTime;
 use bitcoin::address::AddressType;
 use bitcoin::amount::Amount;
@@ -10,12 +11,12 @@ use bitcoin::script::PushBytesBuf;
 use bitcoin::secp256k1::KeyPair;
 use bitcoin::secp256k1::SecretKey;
 use bitcoin::secp256k1::XOnlyPublicKey;
-use bitcoin::secp256k1::{All, Secp256k1};
+use bitcoin::secp256k1::{All, PublicKey, Secp256k1};
 use bitcoin::sighash;
 use bitcoin::taproot::LeafVersion;
 use bitcoin::taproot::NodeInfo;
 use bitcoin::taproot::TapTree;
-use bitcoin::taproot::TaprootBuilder;
+use bitcoin::taproot::{TaprootBuilder, TaprootBuilderError};
 
 use bitcoin::OutPoint;
 use bitcoin::ScriptBuf;
@@ -88,7 +89,6 @@ pub fn chunk_slice(slice: &[u8], chunk_size: usize) -> Vec<&[u8]> {
 // create_taproot_address returns an address committing to a Taproot script with
 // a single leaf containing the spend path with the script:
 // <embedded data> OP_DROP <pubkey> OP_CHECKSIG
-// TODO
 pub fn create_taproot_address(embedded_data: &[u8]) -> Result<String, BitcoinError> {
     let priv_key = PrivateKey::from_wif(BOB_PRIVATE_KEY);
     match priv_key {
@@ -333,7 +333,26 @@ impl Relayer {
     pub fn read(&self, height: u64) -> Result<Vec<Vec<u8>>, Box<dyn core::fmt::Debug>> {
         let hash = self.client.get_block_hash(height);
 
-        let block = self.client.get_block(&hash.unwrap());
+        match hash {
+            Ok(block_hash) => {
+                println!("Succeed to get the blockhash : {}", block_hash);
+            }   
+            Err(error) => {
+                panic!("read: failed to get block hash : {}", error);
+            }
+        }
+        
+        let block = self.client.get_block(&BlockHash::from(hash.unwrap()));
+        
+        match block {
+            Ok(_) => {
+                println!("Succeed to get the block");
+            }   
+            Err(error) => {
+                panic!("read: failed to get block : {}", error);
+            }
+        }
+      
         let mut data = Vec::new();
 
         for tx in block.unwrap().txdata.iter() {
@@ -399,61 +418,61 @@ pub struct TemplateMatch {
 }
 
 pub fn extract_push_data(version: u8, pk_script: Vec<u8>) -> Option<Vec<u8>> {
+    
     let template = [
-        TemplateMatch {
-            opcode: opcodes::OP_FALSE.to_u8(),
-            ..Default::default()
-        },
-        TemplateMatch {
-            opcode: opcodes::all::OP_IF.to_u8(),
-            ..Default::default()
-        },
-        TemplateMatch {
-            expect_push_data: true,
-            max_push_datas: 10,
-            ..Default::default()
-        },
-        TemplateMatch {
-            opcode: opcodes::all::OP_ENDIF.to_u8(),
-            ..Default::default()
-        },
-        TemplateMatch {
-            expect_push_data: true,
-            max_push_datas: 1,
-            ..Default::default()
-        },
-        TemplateMatch {
-            opcode: opcodes::all::OP_CHECKSIG.to_u8(),
-            ..Default::default()
-        },
+        TemplateMatch { opcode: opcodes::OP_FALSE.to_u8(), ..Default::default() },
+        TemplateMatch { opcode: opcodes::all::OP_IF.to_u8(), ..Default::default() },
+        TemplateMatch { expect_push_data: true, max_push_datas: 10, ..Default::default() },
+        TemplateMatch { opcode: opcodes::all::OP_ENDIF.to_u8(), ..Default::default() },
+        TemplateMatch { expect_push_data: true, max_push_datas: 1, ..Default::default() },
+        TemplateMatch { opcode: opcodes::all::OP_CHECKSIG.to_u8(), ..Default::default() },
     ];
 
     let mut template_offset = 0;
 
-    let node_info = NodeInfo::new_leaf_with_ver(
-        ScriptBuf::from_bytes(pk_script),
-        LeafVersion::from_consensus(version).unwrap(),
-    );
-    let tap_tree = TapTree::try_from(node_info).unwrap();
-
-    let mut tokenizer = TapTree::script_leaves(&tap_tree);
-
-    while let Some(op) = tokenizer.next() {
-        if template_offset >= template.len() {
-            return None;
+    let ver = LeafVersion::from_consensus(version);
+    
+    match ver {
+        Ok(_) => {
+            println!("Succeed to get the version");
+        }   
+        Err(error) => {
+            panic!("extract_push_data: failed to get version : {}", error);
         }
-
-        let tpl_entry = &template[template_offset];
-
-        //To be reviewed on testing
-        if !tpl_entry.expect_push_data
-            && op.script().first_opcode().unwrap().to_u8() != tpl_entry.opcode
-        {
-            return None;
-        }
-
-        template_offset += 1;
     }
 
-    Some(template[2].extracted_data.clone())
+    let node_info = NodeInfo::new_leaf_with_ver(ScriptBuf::from_bytes(pk_script), ver.unwrap());
+
+
+    let tap_tree_from_node_info = TapTree::try_from(node_info);
+
+    match tap_tree_from_node_info {
+        Ok(tap_tree) => {
+            let mut tokenizer = TapTree::script_leaves(&tap_tree);
+
+            while let Some(op) = tokenizer.next() {
+        
+                if template_offset >= template.len() {
+                    return None;
+                }
+        
+                let tpl_entry = &template[template_offset];
+                
+                //To be reviewed on testing
+                let first_opcode = op.script().first_opcode();
+                match first_opcode {
+                    Some(opcode) => {
+                        if !tpl_entry.expect_push_data && opcode.to_u8() != tpl_entry.opcode {
+                            return None;
+                        }
+                        template_offset += 1;
+                    },
+                    None => panic!("extract_push_data: non existing first opcode"),
+                }
+            }
+        
+            Some(template[2].extracted_data.clone())
+        }
+        Err(_) => panic!("extract_push_data: failed to get tap tree"),
+    }
 }
