@@ -1,43 +1,25 @@
-use bitcoin::absolute::LockTime;
-use bitcoin::address::AddressType;
-use bitcoin::amount::Amount;
-use bitcoin::blockdata::script::Builder;
-use bitcoin::hash_types::Txid;
-use bitcoin::key::PrivateKey;
-use bitcoin::opcodes;
+// Bitcoin imports
+use bitcoin::{
+    BlockHash, 
+    sighash,
+    script::PushBytesBuf,
+    absolute::LockTime, address::AddressType, amount::Amount, blockdata::script::Builder,
+    hash_types::Txid, key::PrivateKey, opcodes, OutPoint, ScriptBuf, Transaction, Witness,
+    Address, Network, TxIn, TxOut,
+};
+use bitcoin::secp256k1::{All, Secp256k1, KeyPair, SecretKey, XOnlyPublicKey};
+use bitcoin::taproot::{LeafVersion, NodeInfo, TapTree, TaprootBuilder};
 use bitcoin::script as txscript;
-use bitcoin::script::PushBytesBuf;
-use bitcoin::secp256k1::KeyPair;
-use bitcoin::secp256k1::SecretKey;
-use bitcoin::secp256k1::XOnlyPublicKey;
-use bitcoin::secp256k1::{All, PublicKey, Secp256k1};
-use bitcoin::sighash;
-use bitcoin::taproot::LeafVersion;
-use bitcoin::taproot::NodeInfo;
-use bitcoin::taproot::TapTree;
-use bitcoin::taproot::{TaprootBuilder, TaprootBuilderError};
-use bitcoin::BlockHash;
 
-use bitcoin::OutPoint;
-use bitcoin::ScriptBuf;
-use bitcoin::Transaction;
-use bitcoin::Witness;
-use bitcoin::{Address, Network};
-use bitcoin::{TxIn, TxOut};
-use bitcoincore_rpc::Auth;
+// Bitcoincore RPC imports
+use bitcoincore_rpc::{Auth, Error, RpcApi};
 use bitcoincore_rpc::Client as RpcClient;
-use bitcoincore_rpc::Error;
-use bitcoincore_rpc::RpcApi;
+
+// Standard imports
 use core::fmt;
 use std::str::FromStr;
 
-// Implement all functionnalities for Write/Read
-
 const PROTOCOL_ID: [u8; 4] = [0x62, 0x61, 0x72, 0x6b]; // 'bark' in ASCII
-
-// Sample data and keys for testing.
-// bob key pair is used for signing reveal tx
-// internal key pair is used for tweaking
 const BOB_PRIVATE_KEY: &str = "5JoQtsKQuH8hC9MyvfJAqo6qmKLm8ePYNucs7tPu2YxG12trzBt";
 const INTERNAL_PRIVATE_KEY: &str = "5JGgKfRy6vEcWBpLJV5FXUfMGNXzvdWzQHUM1rVLEUJfvZUSwvS";
 
@@ -52,7 +34,6 @@ pub enum BitcoinError {
     RevealErr,
 }
 
-// Implement the Display trait for custom error
 impl fmt::Display for BitcoinError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -68,7 +49,6 @@ impl fmt::Display for BitcoinError {
     }
 }
 
-// chunk_slice splits input slice into max chunk_size length slices
 pub fn chunk_slice(slice: &[u8], chunk_size: usize) -> Vec<&[u8]> {
     let mut chunks = Vec::new();
     let mut i = 0;
@@ -159,8 +139,8 @@ impl Relayer {
     pub fn close(&self) {
         let shutdown = self.client.stop();
         match shutdown {
-            Ok(stopMessage) => {
-                println!("Shutdown client : {}", stopMessage);
+            Ok(stop_message) => {
+                println!("Shutdown client : {}", stop_message);
             }
             Err(error) => {
                 println!("Failed to stop client : {}", error);
@@ -310,7 +290,7 @@ impl Relayer {
     pub fn read_transaction(&self, hash: &Txid) -> Result<Vec<u8>, BitcoinError> {
         let tx = match self.client.get_raw_transaction(hash, None) {
             Ok(bytes) => bytes,
-            Err(err) => return Err(BitcoinError::InvalidTxHash),
+            Err(_err) => return Err(BitcoinError::InvalidTxHash),
         };
 
         if tx.input[0].witness.len() > 1 {
