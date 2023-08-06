@@ -1,5 +1,4 @@
 use bitcoin::{error, secp256k1::PublicKey};
-use hex;
 use relayer::Relayer;
 use relayer::{pay_to_taproot_script, Config};
 
@@ -12,6 +11,7 @@ fn test_relayer_write() {
         true,
         true,
     ));
+
     match new_relayer {
         Ok(relayer) => {
             let bytes: &[u8] = b"rollkit-btc: gm";
@@ -76,15 +76,13 @@ fn test_relayer_write() {
                             }
                         }
                     }
-                    Err(error) => {
-                        eprintln!("Failed to read");
-                        return;
+                    Err(_) => {
+                        eprintln!("Failed to read")
                     }
                 }
             }
             Err(error) => {
-                eprintln!("Failed Relayer : {}", error);
-                return;
+                eprintln!("Failed Relayer : {}", error)
             }
         }
     }
