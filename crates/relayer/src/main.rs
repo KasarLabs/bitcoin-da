@@ -5,7 +5,7 @@ use relayer::{pay_to_taproot_script, Config};
 #[test]
 fn test_relayer_write() {
     let new_relayer = Relayer::new_relayer(&Config::new(
-        "localhost::18332".to_owned(),
+        "localhost:18332/".to_owned(),
         "rpcuser".to_owned(),
         "rpcpass".to_owned(),
         true,
@@ -34,7 +34,7 @@ fn test_relayer_write() {
     #[test]
     fn test_relayer_read() {
         let new_relayer = Relayer::new_relayer(&Config::new(
-            "localhost::18332".to_owned(),
+            "localhost:18332/".to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
             true,
