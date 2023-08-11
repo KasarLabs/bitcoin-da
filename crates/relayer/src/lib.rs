@@ -571,6 +571,9 @@ mod tests {
         }
     }
 
+    // Reveal is the last step of write. Here we proove than we now the spending script. We reveal it to the networ, thus we inscribe the data.
+    // We have an address with test_create_taproot_address. The address is created with a script used to unlock the funds.
+    // We do a first commit to the address with commit_tx.
     #[test]
     fn test_reveal() {
         // Create data and relayer
@@ -583,13 +586,13 @@ mod tests {
             false,
         ))
         .unwrap();
-        // get network
+        // get network, should be regtest
         let blockchain_info = relayer.client.get_blockchain_info().unwrap();
         let network_name = &blockchain_info.chain;
         let network = Network::from_core_arg(network_name)
             .map_err(|_| BitcoinError::InvalidNetwork)
             .unwrap();
-
+        assert_eq!(network, Network::Regtest);
         // append id to data
         let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
         data_with_id.extend_from_slice(embedded_data);
@@ -604,7 +607,7 @@ mod tests {
                 let (commit_idx, commit_output) =
                     find_commit_idx_output_from_txid(&txid, &relayer.client).unwrap();
                 println!("commit_output: {}", commit_output.script_pubkey);
-                // build pubkey
+                // build pubkey, it is the same used to create the address
                 let secp = &Secp256k1::<All>::new();
                 let internal_prkey = PrivateKey::from_wif(INTERNAL_PRIVATE_KEY).unwrap();
                 let internal_pub_key = internal_prkey.public_key(secp);
@@ -634,21 +637,22 @@ mod tests {
                             vout: commit_idx as u32,
                         },
                         script_sig: ScriptBuf::new(),
-                        sequence: bitcoin::Sequence(0xFFFFFFFF),
+                        sequence: bitcoin::Sequence(0),
                         witness: Witness::new(),
                     }],
                     output: Vec::new(),
                 };
-
+                // outputkey should match commit_output and p2tr_script
                 let p2tr_script = pay_to_taproot_script(&output_key.to_inner()).unwrap();
                 println!("p2tr_script: {}", p2tr_script);
+                assert_eq!(p2tr_script, commit_output.script_pubkey);
+                // min relay fee and build output
                 let tx_out = TxOut {
-                    value: 1000, // in satoshi
+                    value: 99860, // in satoshi
                     script_pubkey: p2tr_script,
                 };
-
                 tx.output.push(tx_out.clone());
-
+                // build signature
                 let mut sighash_cache = sighash::SighashCache::new(&tx);
                 let prevouts_tx_out = vec![tx_out];
                 let prevouts = sighash::Prevouts::All(&prevouts_tx_out);
@@ -666,6 +670,13 @@ mod tests {
                 let signature = secp.sign_schnorr(&message, &keypair.keypair(secp));
                 println!("signature: {}", signature);
 
+                assert!(
+                    secp.verify_schnorr(&signature, &message, &x_pub_key)
+                        .is_ok(),
+                    "Signature is not valid"
+                );
+
+                // control block to pass to the witness.
                 let control_block = tap_tree
                     .control_block(&((pk_script.into()), LeafVersion::TapScript))
                     .ok_or(BitcoinError::ControlBlockErr)
