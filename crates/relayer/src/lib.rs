@@ -1,24 +1,19 @@
-use bitcoin::address::NetworkChecked;
 use bitcoin::amount::Amount;
 use bitcoin::blockdata::script::Builder;
 use bitcoin::hash_types::Txid;
-use bitcoin::hashes::Hash;
+
+use bitcoin::address::AddressType;
 use bitcoin::key::PrivateKey;
 use bitcoin::opcodes;
 use bitcoin::script as txscript;
 use bitcoin::script::PushBytesBuf;
 use bitcoin::secp256k1::KeyPair;
-use bitcoin::secp256k1::SecretKey;
 use bitcoin::secp256k1::XOnlyPublicKey;
 use bitcoin::secp256k1::{All, Secp256k1};
-use bitcoin::sighash;
 use bitcoin::taproot::LeafVersion;
 use bitcoin::taproot::NodeInfo;
 use bitcoin::taproot::TapTree;
 use bitcoin::taproot::TaprootBuilder;
-use bitcoin::BlockHash;
-use bitcoin::PublicKey;
-use bitcoin::{absolute::LockTime, address::AddressType};
 
 use bitcoin::OutPoint;
 use bitcoin::ScriptBuf;
@@ -31,7 +26,6 @@ use bitcoincore_rpc::Client as RpcClient;
 use bitcoincore_rpc::Error;
 use bitcoincore_rpc::RpcApi;
 use core::fmt;
-use std::str::FromStr;
 
 // Implement all functionnalities for Write/Read
 
@@ -40,7 +34,7 @@ const PROTOCOL_ID: [u8; 4] = [0x62, 0x61, 0x72, 0x6b]; // 'bark' in ASCII
 // Sample data and keys for testing.
 // bob key pair is used for signing reveal tx
 // internal key pair is used for tweaking
-const BOB_PRIVATE_KEY: &str = "5JoQtsKQuH8hC9MyvfJAqo6qmKLm8ePYNucs7tPu2YxG12trzBt";
+// const BOB_PRIVATE_KEY: &str = "5JoQtsKQuH8hC9MyvfJAqo6qmKLm8ePYNucs7tPu2YxG12trzBt";
 const INTERNAL_PRIVATE_KEY: &str = "5JGgKfRy6vEcWBpLJV5FXUfMGNXzvdWzQHUM1rVLEUJfvZUSwvS";
 
 #[derive(Debug)]
@@ -105,6 +99,8 @@ fn build_script(embedded_data: &[u8]) -> txscript::Builder {
         builder = builder.push_slice(PushBytesBuf::try_from(chunk.to_vec()).unwrap());
     }
     builder = builder.push_opcode(opcodes::all::OP_ENDIF);
+    let builder: txscript::Builder = builder.push_opcode(opcodes::OP_TRUE);
+
     builder
 }
 
@@ -119,9 +115,7 @@ pub fn create_taproot_address(
     let key_pair = KeyPair::from_secret_key(secp, &internal_pkey.inner);
     let (x_pub_key, _) = XOnlyPublicKey::from_keypair(&key_pair);
     let builder: txscript::Builder = build_script(embedded_data);
-    let builder: txscript::Builder = builder
-        .push_x_only_key(&x_pub_key)
-        .push_opcode(opcodes::all::OP_CHECKSIG);
+
     let pk_script = builder.as_script();
     let mut taproot_builder = TaprootBuilder::new();
     taproot_builder = taproot_builder.add_leaf(0, pk_script.into()).unwrap();
@@ -143,7 +137,6 @@ fn find_commit_idx_output_from_txid(
     client: &RpcClient,
 ) -> Result<(usize, TxOut), BitcoinError> {
     let raw_commit: Transaction = client.get_raw_transaction(txid, None).unwrap();
-    println!("{:?}", raw_commit);
     let mut commit_idx = None;
     let mut commit_output = None;
     // look for the good UTXO
@@ -221,88 +214,59 @@ impl Relayer {
     ) -> Result<Txid, BitcoinError> {
         let (commit_idx, commit_output) =
             find_commit_idx_output_from_txid(commit_hash, &self.client).unwrap();
+        // build pubkey, it is the same used to create the address
+        let secp = &Secp256k1::<All>::new();
+        let internal_prkey = PrivateKey::from_wif(INTERNAL_PRIVATE_KEY).unwrap();
+        let internal_pub_key = internal_prkey.public_key(secp);
+        let x_pub_key: XOnlyPublicKey = XOnlyPublicKey::from(internal_pub_key.inner);
+        // build inscription script
+        let builder: txscript::Builder = build_script(embedded_data);
+        let pk_script = builder.as_script();
+        // build taproot tree
+        let mut taproot_builder = TaprootBuilder::new();
+        taproot_builder = taproot_builder.add_leaf(0, pk_script.into()).unwrap();
+        let tap_tree = taproot_builder.finalize(secp, x_pub_key).unwrap();
+        let output_key = tap_tree.output_key();
+        // build reveal transaction
+        let mut tx = Transaction {
+            version: 2,
+            lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: *commit_hash,
+                    vout: commit_idx as u32,
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: bitcoin::Sequence::MAX,
+                witness: Witness::new(),
+            }],
+            output: Vec::new(),
+        };
+        // outputkey should match commit_output and p2tr_script
+        let p2tr_script = pay_to_taproot_script(&output_key.to_inner()).unwrap();
+        assert_eq!(p2tr_script, commit_output.script_pubkey);
+        // min relay fee and build output
+        let tx_out = TxOut {
+            value: 50000, // in satoshi
+            script_pubkey: p2tr_script,
+        };
+        tx.output.push(tx_out);
 
-        let priv_key = PrivateKey::from_wif(BOB_PRIVATE_KEY);
-        match priv_key {
-            Ok(priv_key) => {
-                let secp = &Secp256k1::<All>::new();
-                let pub_key = priv_key.public_key(secp);
-                //
-                let builder: txscript::Builder = build_script(embedded_data);
-                let pk_script = builder.as_script();
+        // control block to pass to the witness.
+        let control_block = tap_tree
+            .control_block(&((pk_script.into()), LeafVersion::TapScript))
+            .ok_or(BitcoinError::ControlBlockErr)
+            .unwrap();
 
-                let mut taproot_builder = TaprootBuilder::new();
-                taproot_builder = taproot_builder
-                    .add_leaf(0, ScriptBuf::from_bytes(pk_script.to_bytes()))
-                    .unwrap();
+        // Assemble the witness
+        // Add script witness data (OP_FALSE as we want the false path), script, and control block to the witness field of the input
+        tx.input[0].witness.push(pk_script.as_bytes());
+        tx.input[0].witness.push(control_block.serialize());
 
-                let internal_pkey = PrivateKey::from_wif(INTERNAL_PRIVATE_KEY).unwrap();
-                let internal_pub_key = internal_pkey.public_key(secp);
-                let tap_tree = taproot_builder
-                    .finalize(secp, XOnlyPublicKey::from(internal_pub_key.inner))
-                    .unwrap();
-                let output_key = tap_tree.output_key();
-
-                let p2tr_script = pay_to_taproot_script(&output_key.to_inner()).unwrap();
-
-                let control_block = tap_tree
-                    .control_block(&(
-                        ScriptBuf::from_bytes(pk_script.to_bytes()),
-                        LeafVersion::TapScript,
-                    ))
-                    .ok_or(BitcoinError::ControlBlockErr)?;
-
-                let mut tx = Transaction {
-                    version: 2,
-                    lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
-                    input: vec![TxIn {
-                        previous_output: OutPoint {
-                            txid: *commit_hash,
-                            vout: commit_idx as u32,
-                        },
-                        script_sig: ScriptBuf::new(),
-                        sequence: bitcoin::Sequence(0),
-                        witness: Witness::new(),
-                    }],
-                    output: vec![],
-                };
-
-                let tx_out = TxOut {
-                    value: 1e3 as u64, // in satoshi
-                    script_pubkey: p2tr_script,
-                };
-
-                tx.output.push(tx_out);
-
-                let sighash = sighash::SighashCache::new(&tx)
-                    .taproot_signature_hash(
-                        commit_idx,
-                        &sighash::Prevouts::All(&[commit_output.clone()]),
-                        None,
-                        None,
-                        sighash::TapSighashType::All,
-                    )
-                    .unwrap();
-
-                let key_pair = KeyPair::from_secret_key(
-                    secp,
-                    &SecretKey::from_slice(&priv_key.to_bytes()).unwrap(),
-                );
-                let sig = secp.sign_schnorr(&sighash.into(), &key_pair);
-
-                // Assemble the witness
-                tx.input[0].witness.push(sig.as_ref());
-                tx.input[0].witness.push(pub_key.inner.serialize());
-                tx.input[0].witness.push(control_block.serialize());
-
-                let txid = self
-                    .client
-                    .send_raw_transaction(&tx)
-                    .map_err(|_| BitcoinError::RevealErr)?;
-
-                Ok(txid)
-            }
-            _ => Err(BitcoinError::PrivateKeyErr),
+        let txid = self.client.send_raw_transaction(&tx);
+        match txid {
+            Ok(hash) => Ok(hash),
+            Err(_err) => Err(BitcoinError::RevealErr),
         }
     }
 
@@ -374,7 +338,6 @@ impl Relayer {
         let network = Network::from_core_arg(network_name)
             .map_err(|_| BitcoinError::InvalidNetwork)
             .unwrap();
-        println!("Network: {:?}", network);
         // append id to data
         let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
         data_with_id.extend_from_slice(data);
@@ -502,10 +465,6 @@ pub fn extract_push_data(version: u8, pk_script: Vec<u8>) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use bitcoin::{
-        address::Payload,
-        secp256k1::{Message, Scalar},
-    };
 
     use super::*;
 
@@ -539,9 +498,7 @@ mod tests {
         let (x_pub_key, _) = XOnlyPublicKey::from_keypair(&key_pair);
 
         let builder: txscript::Builder = build_script(embedded_data);
-        let builder: txscript::Builder = builder
-            .push_x_only_key(&x_pub_key)
-            .push_opcode(opcodes::all::OP_CHECKSIG);
+
         let pk_script = builder.as_script();
         let mut taproot_builder = TaprootBuilder::new();
         taproot_builder = taproot_builder.add_leaf(0, pk_script.into()).unwrap();
@@ -593,9 +550,6 @@ mod tests {
         }
     }
 
-    // Reveal is the last step of write. Here we proove than we now the spending script. We reveal it to the networ, thus we inscribe the data.
-    // We have an address with test_create_taproot_address. The address is created with a script used to unlock the funds.
-    // We do a first commit to the address with commit_tx.
     #[test]
     fn test_reveal() {
         // Create data and relayer
@@ -637,10 +591,6 @@ mod tests {
                 println!("x_only_pub_key: {}", x_pub_key);
                 // build inscription script
                 let builder: txscript::Builder = build_script(&data_with_id);
-                // need to add CHECKSIG at the end
-                let builder: txscript::Builder = builder
-                    .push_x_only_key(&x_pub_key)
-                    .push_opcode(opcodes::all::OP_CHECKSIG);
                 let pk_script = builder.as_script();
                 println!("pk_script: {}", pk_script);
                 // build taproot tree
@@ -659,7 +609,7 @@ mod tests {
                             vout: commit_idx as u32,
                         },
                         script_sig: ScriptBuf::new(),
-                        sequence: bitcoin::Sequence(0),
+                        sequence: bitcoin::Sequence::MAX,
                         witness: Witness::new(),
                     }],
                     output: Vec::new(),
@@ -670,36 +620,10 @@ mod tests {
                 assert_eq!(p2tr_script, commit_output.script_pubkey);
                 // min relay fee and build output
                 let tx_out = TxOut {
-                    value: 1000, // in satoshi
+                    value: 50000, // in satoshi
                     script_pubkey: p2tr_script,
                 };
-                tx.output.push(tx_out.clone());
-                // build signature
-                let mut sighash_cache = sighash::SighashCache::new(&tx);
-                let prevouts_tx_out = vec![TxOut {
-                    value: 100000, // in satoshi
-                    script_pubkey: commit_output.script_pubkey,
-                }];
-                let prevouts = sighash::Prevouts::All(&prevouts_tx_out);
-                let sighash = sighash_cache
-                    .taproot_script_spend_signature_hash(
-                        0,
-                        &prevouts,
-                        pk_script.tapscript_leaf_hash(),
-                        sighash::TapSighashType::All,
-                    )
-                    .unwrap();
-
-                let message = Message::from_slice(&sighash.to_byte_array()).unwrap();
-                let keypair = SecretKey::from_slice(&internal_prkey[..]).unwrap();
-                let signature = secp.sign_schnorr(&message, &keypair.keypair(secp));
-                println!("signature: {}", signature);
-
-                assert!(
-                    secp.verify_schnorr(&signature, &message, &x_pub_key)
-                        .is_ok(),
-                    "Signature is not valid"
-                );
+                tx.output.push(tx_out);
 
                 // control block to pass to the witness.
                 let control_block = tap_tree
@@ -709,9 +633,7 @@ mod tests {
 
                 println!("control_block: {:?}", control_block);
                 // Assemble the witness
-                // Add script witness data (OP_FALSE as we want the false path), script, and control block to the witness field of the input
-                tx.input[0].witness.push(vec![opcodes::OP_FALSE.to_u8()]);
-                tx.input[0].witness.push(signature.as_ref());
+                // Add script and control block to the witness field of the input
                 tx.input[0].witness.push(pk_script.as_bytes());
                 tx.input[0].witness.push(control_block.serialize());
 
@@ -728,8 +650,8 @@ mod tests {
     }
 
     #[test]
-    fn test_write() {
-        let data = b"Hello, world!";
+    fn test_reveal2() {
+        let embedded_data = b"Hello, world!";
         let relayer = Relayer::new_relayer(&Config::new(
             "localhost:8332".to_owned(),
             "rpcuser".to_owned(),
@@ -738,6 +660,59 @@ mod tests {
             false,
         ))
         .unwrap();
-        let res = relayer.write(data);
+        // get network, should be regtest
+        let blockchain_info = relayer.client.get_blockchain_info().unwrap();
+        let network_name = &blockchain_info.chain;
+        let network = Network::from_core_arg(network_name)
+            .map_err(|_| BitcoinError::InvalidNetwork)
+            .unwrap();
+        assert_eq!(network, Network::Regtest);
+        // append id to data
+        let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
+        data_with_id.extend_from_slice(embedded_data);
+        // create address with data in script
+        let address = create_taproot_address(&data_with_id, network).unwrap();
+        println!("Taproot address: {}", address);
+        // do first transaction -> commit
+        match relayer.commit_tx(&address) {
+            Ok(txid) => match relayer.reveal_tx(&data_with_id, &txid) {
+                Ok(txid) => {
+                    println!("Reveal Txid: {}", txid);
+                    println!("Successful Reveal");
+                }
+                Err(e) => panic!("Reveal failed with error: {:?}", e),
+            },
+            Err(e) => panic!("Commit failed with error: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_write() {
+        let embedded_data = b"Hello, world!";
+        let relayer = Relayer::new_relayer(&Config::new(
+            "localhost:8332".to_owned(),
+            "rpcuser".to_owned(),
+            "rpcpass".to_owned(),
+            false,
+            false,
+        ))
+        .unwrap();
+        // get network, should be regtest
+        let blockchain_info = relayer.client.get_blockchain_info().unwrap();
+        let network_name = &blockchain_info.chain;
+        let network = Network::from_core_arg(network_name)
+            .map_err(|_| BitcoinError::InvalidNetwork)
+            .unwrap();
+        assert_eq!(network, Network::Regtest);
+        // append id to data
+        let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
+        data_with_id.extend_from_slice(embedded_data);
+        match relayer.write(&data_with_id) {
+            Ok(txid) => {
+                println!("Txid: {}", txid);
+                println!("Successful write");
+            }
+            Err(e) => panic!("Write failed with error: {:?}", e),
+        }
     }
 }
