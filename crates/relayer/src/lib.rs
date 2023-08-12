@@ -116,20 +116,17 @@ pub fn create_taproot_address(
 ) -> Result<Address, BitcoinError> {
     let secp = &Secp256k1::<All>::new();
     let internal_pkey = PrivateKey::from_wif(INTERNAL_PRIVATE_KEY).unwrap();
-    let internal_pub_key = internal_pkey.public_key(secp);
-    let x_pub_key: XOnlyPublicKey = XOnlyPublicKey::from(internal_pub_key.inner);
+    let key_pair = KeyPair::from_secret_key(secp, &internal_pkey.inner);
+    let (x_pub_key, _) = XOnlyPublicKey::from_keypair(&key_pair);
     let builder: txscript::Builder = build_script(embedded_data);
     let builder: txscript::Builder = builder
         .push_x_only_key(&x_pub_key)
         .push_opcode(opcodes::all::OP_CHECKSIG);
     let pk_script = builder.as_script();
     let mut taproot_builder = TaprootBuilder::new();
-    taproot_builder = taproot_builder
-        .add_leaf(0, ScriptBuf::from_bytes(pk_script.to_bytes()))
-        .unwrap();
+    taproot_builder = taproot_builder.add_leaf(0, pk_script.into()).unwrap();
     let tap_tree = taproot_builder.finalize(secp, x_pub_key).unwrap();
     let output_key = tap_tree.output_key();
-
     Ok(Address::p2tr_tweaked(output_key, network))
 }
 
@@ -138,7 +135,6 @@ pub fn pay_to_taproot_script(taproot_key: &XOnlyPublicKey) -> Result<ScriptBuf, 
         .push_opcode(opcodes::all::OP_PUSHNUM_1)
         .push_slice(taproot_key.serialize())
         .into_script();
-
     Ok(builder)
 }
 
@@ -147,6 +143,7 @@ fn find_commit_idx_output_from_txid(
     client: &RpcClient,
 ) -> Result<(usize, TxOut), BitcoinError> {
     let raw_commit: Transaction = client.get_raw_transaction(txid, None).unwrap();
+    println!("{:?}", raw_commit);
     let mut commit_idx = None;
     let mut commit_output = None;
     // look for the good UTXO
@@ -505,7 +502,10 @@ pub fn extract_push_data(version: u8, pk_script: Vec<u8>) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use bitcoin::secp256k1::Message;
+    use bitcoin::{
+        address::Payload,
+        secp256k1::{Message, Scalar},
+    };
 
     use super::*;
 
@@ -529,18 +529,41 @@ mod tests {
         assert_eq!(chunks.len(), 0); // Expect 0 chunks for empty data
     }
 
-    // This test isn't good enough
-    // we should compute manually and then test the result
     #[test]
     fn test_create_taproot_address() {
         let embedded_data = b"Hello, world!";
         let network = Network::Regtest; // Change this as necessary.
+        let secp = &Secp256k1::<All>::new();
+        let internal_pkey = PrivateKey::from_wif(INTERNAL_PRIVATE_KEY).unwrap();
+        let key_pair = KeyPair::from_secret_key(secp, &internal_pkey.inner);
+        let (x_pub_key, _) = XOnlyPublicKey::from_keypair(&key_pair);
 
+        let builder: txscript::Builder = build_script(embedded_data);
+        let builder: txscript::Builder = builder
+            .push_x_only_key(&x_pub_key)
+            .push_opcode(opcodes::all::OP_CHECKSIG);
+        let pk_script = builder.as_script();
+        let mut taproot_builder = TaprootBuilder::new();
+        taproot_builder = taproot_builder.add_leaf(0, pk_script.into()).unwrap();
+        let tap_tree = taproot_builder.finalize(secp, x_pub_key).unwrap();
+        let output_key = tap_tree.output_key();
         match create_taproot_address(embedded_data, network) {
             Ok(address) => {
+                println!("Taproot address: {}", address);
+                assert!(
+                    address.payload.matches_script_pubkey(
+                        pay_to_taproot_script(&output_key.to_inner())
+                            .unwrap()
+                            .as_script()
+                    ),
+                    "Script does not match"
+                );
+                assert!(
+                    address.is_related_to_xonly_pubkey(&output_key.to_inner()),
+                    "Wrong pub key"
+                );
                 assert!(address.address_type() == Some(AddressType::P2tr)); // sanity check
                 assert!(address.network == network);
-                println!("Taproot address: {}", address);
             }
             Err(e) => {
                 panic!("create_taproot_address failed with error: {:?}", e);
@@ -558,10 +581,9 @@ mod tests {
             false,
         ))
         .unwrap();
-        let test_addr: Address =
-            Address::from_str("bcrt1pl9823mkmazmjrfmnalara5e2vfamw7czss0skf2shkvs4wf36qhsrw96pr")
-                .unwrap()
-                .assume_checked();
+        let embedded_data = b"Hello, world!";
+        let network = Network::Regtest;
+        let test_addr: Address = create_taproot_address(embedded_data, network).unwrap();
 
         match relayer.commit_tx(&test_addr) {
             Ok(txid) => {
@@ -648,13 +670,16 @@ mod tests {
                 assert_eq!(p2tr_script, commit_output.script_pubkey);
                 // min relay fee and build output
                 let tx_out = TxOut {
-                    value: 99860, // in satoshi
+                    value: 1000, // in satoshi
                     script_pubkey: p2tr_script,
                 };
                 tx.output.push(tx_out.clone());
                 // build signature
                 let mut sighash_cache = sighash::SighashCache::new(&tx);
-                let prevouts_tx_out = vec![tx_out];
+                let prevouts_tx_out = vec![TxOut {
+                    value: 100000, // in satoshi
+                    script_pubkey: commit_output.script_pubkey,
+                }];
                 let prevouts = sighash::Prevouts::All(&prevouts_tx_out);
                 let sighash = sighash_cache
                     .taproot_script_spend_signature_hash(
@@ -682,6 +707,7 @@ mod tests {
                     .ok_or(BitcoinError::ControlBlockErr)
                     .unwrap();
 
+                println!("control_block: {:?}", control_block);
                 // Assemble the witness
                 // Add script witness data (OP_FALSE as we want the false path), script, and control block to the witness field of the input
                 tx.input[0].witness.push(vec![opcodes::OP_FALSE.to_u8()]);
@@ -699,5 +725,19 @@ mod tests {
             }
             Err(e) => panic!("Commit failed with error: {:?}", e),
         }
+    }
+
+    #[test]
+    fn test_write() {
+        let data = b"Hello, world!";
+        let relayer = Relayer::new_relayer(&Config::new(
+            "localhost:8332".to_owned(),
+            "rpcuser".to_owned(),
+            "rpcpass".to_owned(),
+            false,
+            false,
+        ))
+        .unwrap();
+        let res = relayer.write(data);
     }
 }

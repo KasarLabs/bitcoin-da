@@ -193,6 +193,7 @@ name = "relayer"
 version = "0.1.0"
 dependencies = [
  "bitcoin",
+ "bitcoin_hashes",
  "bitcoincore-rpc",
  "hex",
  "serde",
