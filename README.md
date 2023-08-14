@@ -4,6 +4,8 @@ This crate allows to use bitcoin as a data availability layer.
 
 It provides `write` and `read` functions. This can be included in any sequencer written in rust.
 
+This repo is rust adaptation of rollkit's [bitcoin-da](https://github.com/rollkit/bitcoin-da).
+
 ## Prerequisites
 
 - Install `bitcoind` & `bitcoin-cli`
