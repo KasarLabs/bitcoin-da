@@ -713,4 +713,34 @@ mod tests {
             Err(e) => panic!("Write failed with error: {:?}", e),
         }
     }
+
+    #[test]
+    fn test_read() {
+        let embedded_data = b"Hello, world!";
+        let relayer = Relayer::new_relayer(&Config::new(
+            "localhost:18332".to_owned(),
+            "rpcuser".to_owned(),
+            "rpcpass".to_owned(),
+            false,
+            false,
+        ))
+        .unwrap();
+        // get network, should bee regtest
+        let blockchain_info = relayer.client.get_blockchain_info().unwrap();
+        let network_name = &blockchain_info.chain;
+        let network = Network::from_core_arg(network_name)
+            .map_err(|_| BitcoinError::InvalidNetwork)
+            .unwrap();
+        assert_eq!(network, Network::Regtest);
+        // append id to data
+        let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
+        data_with_id.extend_from_slice(embedded_data);
+        let height = 10;
+        match relayer.read(height) {
+            Ok(vec) => {
+                println!("Successful read");
+            }
+            Err(e) => panic!("Read failed with error: {:?}", e),
+        }
+    }
 }
