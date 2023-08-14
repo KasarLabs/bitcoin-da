@@ -12,3 +12,4 @@ bitcoincore-rpc = { workspace = true }
 serde = { workspace = true }
 hex = "0.4.2"
 bitcoin_hashes = "0.12.0"
+dotenv = "0.15.0"

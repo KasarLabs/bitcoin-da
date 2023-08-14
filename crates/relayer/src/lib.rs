@@ -26,15 +26,13 @@ use bitcoincore_rpc::Client as RpcClient;
 use bitcoincore_rpc::Error;
 use bitcoincore_rpc::RpcApi;
 use core::fmt;
+extern crate dotenv;
 
 // Implement all functionnalities for Write/Read
 
 const PROTOCOL_ID: [u8; 4] = [0x62, 0x61, 0x72, 0x6b]; // 'bark' in ASCII
 
-// Sample data and keys for testing.
-// bob key pair is used for signing reveal tx
-// internal key pair is used for tweaking
-// const BOB_PRIVATE_KEY: &str = "5JoQtsKQuH8hC9MyvfJAqo6qmKLm8ePYNucs7tPu2YxG12trzBt";
+// Internal key pair is used for tweaking
 const INTERNAL_PRIVATE_KEY: &str = "5JGgKfRy6vEcWBpLJV5FXUfMGNXzvdWzQHUM1rVLEUJfvZUSwvS";
 
 #[derive(Debug)]
