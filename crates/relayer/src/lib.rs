@@ -388,29 +388,39 @@ pub fn extract_push_data(version: u8, pk_script: Vec<u8>) -> Option<Vec<u8>> {
     let template = [
         TemplateMatch {
             opcode: opcodes::OP_FALSE.to_u8(),
-            ..Default::default()
+            expect_push_data: false,
+            max_push_datas: 0,
+            extracted_data: Vec::new(),
         },
         TemplateMatch {
             opcode: opcodes::all::OP_IF.to_u8(),
-            ..Default::default()
+            expect_push_data: false,
+            max_push_datas: 0,
+            extracted_data: Vec::new(),
         },
         TemplateMatch {
             expect_push_data: true,
             max_push_datas: 10,
-            ..Default::default()
+            extracted_data: Vec::new(),
+            opcode : 0,
         },
         TemplateMatch {
             opcode: opcodes::all::OP_ENDIF.to_u8(),
-            ..Default::default()
+            expect_push_data: false,
+            max_push_datas: 0,
+            extracted_data: Vec::new(),
         },
         TemplateMatch {
             expect_push_data: true,
             max_push_datas: 1,
-            ..Default::default()
+            extracted_data: Vec::new(),
+            opcode : 0,
         },
         TemplateMatch {
             opcode: opcodes::all::OP_CHECKSIG.to_u8(),
-            ..Default::default()
+            expect_push_data: false,
+            max_push_datas: 0,
+            extracted_data: Vec::new(),
         },
     ];
 
@@ -716,6 +726,26 @@ mod tests {
 
     #[test]
     fn test_read() {
+        let relayer = Relayer::new_relayer(&Config::new(
+            "localhost:18332".to_owned(),
+            "rpcuser".to_owned(),
+            "rpcpass".to_owned(),
+            false,
+            false,
+        ))
+        .unwrap();
+
+        let height = 10;
+        match relayer.read(height) {
+            Ok(vec) => {
+                println!("Successful read");
+            }
+            Err(e) => panic!("Read failed with error: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_read_transaction() {
         let embedded_data = b"Hello, world!";
         let relayer = Relayer::new_relayer(&Config::new(
             "localhost:18332".to_owned(),
@@ -735,12 +765,22 @@ mod tests {
         // append id to data
         let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
         data_with_id.extend_from_slice(embedded_data);
-        let height = 10;
-        match relayer.read(height) {
-            Ok(vec) => {
-                println!("Successful read");
+
+        match relayer.write(&data_with_id) {
+            Ok(txid) => {
+                println!("Txid: {}", txid);
+                println!("Successful write");
+
+                match relayer.read_transaction(&txid) {
+                    Ok(_) => {
+                        println!("Successful read_transaction");
+                    }
+                    Err(e) => panic!("Read_transaction failed with error: {:?}", e),
+                }
             }
-            Err(e) => panic!("Read failed with error: {:?}", e),
+            Err(e) => panic!("Write failed with error: {:?}", e),
         }
+
+        
     }
 }
