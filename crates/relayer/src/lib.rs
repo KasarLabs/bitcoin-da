@@ -6,6 +6,7 @@ use bitcoin::address::AddressType;
 use bitcoin::key::PrivateKey;
 use bitcoin::opcodes;
 use bitcoin::script as txscript;
+use bitcoin::script::Instruction;
 use bitcoin::script::PushBytesBuf;
 use bitcoin::secp256k1::KeyPair;
 use bitcoin::secp256k1::XOnlyPublicKey;
@@ -46,6 +47,8 @@ pub enum BitcoinError {
     TransactionErr,
     RevealErr,
     InvalidNetwork,
+    ReadErr,
+    ReadNoDataErr,
 }
 
 // Implement the Display trait for custom error
@@ -61,6 +64,8 @@ impl fmt::Display for BitcoinError {
             BitcoinError::TransactionErr => write!(f, "Transaction error"),
             BitcoinError::RevealErr => write!(f, "Reveal error"),
             BitcoinError::InvalidNetwork => write!(f, "Invalid network"),
+            BitcoinError::ReadErr => write!(f, "Read error"),
+            BitcoinError::ReadNoDataErr => write!(f, "Read no data in tx error"),
         }
     }
 }
@@ -277,9 +282,9 @@ impl Relayer {
         if tx.input[0].witness.len() > 1 {
             let witness = &tx.input[0].witness;
             let witness = witness[1].to_vec(); // Convert &[u8] to Vec<u8>
-            let push_data = match extract_push_data(0, witness) {
+            let push_data = match extract_push_data(witness) {
                 Some(data) => data,
-                None => return Err(BitcoinError::InvalidTxHash),
+                None => return Err(BitcoinError::ReadErr),
             };
 
             let protocol_id_ref: &[u8] = &PROTOCOL_ID;
@@ -288,10 +293,10 @@ impl Relayer {
             }
         }
 
-        Err(BitcoinError::InvalidTxHash)
+        Err(BitcoinError::ReadNoDataErr)
     }
 
-    pub fn read(&self, height: u64) -> Result<Vec<Vec<u8>>, Box<dyn core::fmt::Debug>> {
+    pub fn read_height(&self, height: u64) -> Result<Vec<Vec<u8>>, Box<dyn core::fmt::Debug>> {
         let hash = self.client.get_block_hash(height);
 
         match hash {
@@ -318,7 +323,7 @@ impl Relayer {
 
         for tx in block.unwrap().txdata.iter() {
             if let Some(witness) = tx.input[0].witness.nth(1) {
-                if let Some(push_data) = extract_push_data(0, witness.to_vec()) {
+                if let Some(push_data) = extract_push_data(witness.to_vec()) {
                     // Skip PROTOCOL_ID
                     if push_data.starts_with(&PROTOCOL_ID) {
                         data.push(push_data[PROTOCOL_ID.len()..].to_vec());
@@ -376,96 +381,55 @@ impl Config {
     }
 }
 
-#[derive(Default)]
-pub struct TemplateMatch {
-    expect_push_data: bool,
-    max_push_datas: usize,
-    opcode: u8,
-    extracted_data: Vec<u8>,
-}
-
-pub fn extract_push_data(version: u8, pk_script: Vec<u8>) -> Option<Vec<u8>> {
-    let template = [
-        TemplateMatch {
-            opcode: opcodes::OP_FALSE.to_u8(),
-            expect_push_data: false,
-            max_push_datas: 0,
-            extracted_data: Vec::new(),
-        },
-        TemplateMatch {
-            opcode: opcodes::all::OP_IF.to_u8(),
-            expect_push_data: false,
-            max_push_datas: 0,
-            extracted_data: Vec::new(),
-        },
-        TemplateMatch {
-            expect_push_data: true,
-            max_push_datas: 10,
-            extracted_data: Vec::new(),
-            opcode : 0,
-        },
-        TemplateMatch {
-            opcode: opcodes::all::OP_ENDIF.to_u8(),
-            expect_push_data: false,
-            max_push_datas: 0,
-            extracted_data: Vec::new(),
-        },
-        TemplateMatch {
-            expect_push_data: true,
-            max_push_datas: 1,
-            extracted_data: Vec::new(),
-            opcode : 0,
-        },
-        TemplateMatch {
-            opcode: opcodes::all::OP_CHECKSIG.to_u8(),
-            expect_push_data: false,
-            max_push_datas: 0,
-            extracted_data: Vec::new(),
-        },
-    ];
-
-    let mut template_offset = 0;
-
-    let ver = LeafVersion::from_consensus(version);
-
-    match ver {
-        Ok(_) => {
-            println!("Succeed to get the version");
-        }
-        Err(error) => {
-            panic!("extract_push_data: failed to get version : {}", error);
-        }
-    }
-
-    let node_info = NodeInfo::new_leaf_with_ver(ScriptBuf::from_bytes(pk_script), ver.unwrap());
+fn extract_push_data(pk_script: Vec<u8>) -> Option<Vec<u8>> {
+    let node_info =
+        NodeInfo::new_leaf_with_ver(ScriptBuf::from_bytes(pk_script), LeafVersion::TapScript);
 
     let tap_tree_from_node_info = TapTree::try_from(node_info);
-
     match tap_tree_from_node_info {
         Ok(tap_tree) => {
-            let tokenizer = TapTree::script_leaves(&tap_tree);
+            let leaves = TapTree::script_leaves(&tap_tree);
 
-            for op in tokenizer {
-                if template_offset >= template.len() {
-                    return None;
-                }
+            for leaf in leaves {
+                let mut instructions = leaf.script().instructions();
 
-                let tpl_entry = &template[template_offset];
+                // Try to get the first 3 opcodes
+                let op1 = instructions.next();
+                let op2 = instructions.next();
+                let op3 = instructions.next();
+                // Check if op1 is OP_FALSE and op2 is OP_IF
+                // println!("op1: {:?}, op2: {:?}, op3 : {:?}", op1, op2, op3);
+                match (op1, op2, op3) {
+                    (
+                        Some(Ok(Instruction::PushBytes(opfalse))),
+                        Some(Ok(Instruction::Op(opcodes::all::OP_IF))),
+                        Some(Ok(Instruction::PushBytes(bytes_sequence))),
+                    ) => {
+                        if opfalse.is_empty() && bytes_sequence.as_bytes().eq(b"block") {
+                            let op_pushnum1 = instructions.next();
+                            let block_number = instructions.next();
+                            let op_0 = instructions.next();
 
-                //To be reviewed on testing
-                let first_opcode = op.script().first_opcode();
-                match first_opcode {
-                    Some(opcode) => {
-                        if !tpl_entry.expect_push_data && opcode.to_u8() != tpl_entry.opcode {
-                            return None;
+                            let mut data_collector = Vec::new();
+
+                            loop {
+                                match instructions.next() {
+                                    Some(Ok(Instruction::Op(opcodes::all::OP_ENDIF))) => break,
+                                    Some(Ok(Instruction::PushBytes(data))) => {
+                                        data_collector.extend(data.as_bytes());
+                                    }
+                                    _ => (),
+                                }
+                            }
+                            if !data_collector.is_empty() {
+                                return Some(data_collector);
+                            }
                         }
-                        template_offset += 1;
                     }
-                    None => panic!("extract_push_data: non existing first opcode"),
+                    _ => continue, // Go to next leaf if the first two opcodes don't match our criteria
                 }
             }
-
-            Some(template[2].extracted_data.clone())
+            None
         }
         Err(_) => panic!("extract_push_data: failed to get tap tree"),
     }
@@ -497,11 +461,133 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_push_data() {
+        let mock_script = vec![
+            opcodes::OP_FALSE.to_u8(),   // OP_0
+            opcodes::all::OP_IF.to_u8(), // OP_IF
+            opcodes::all::OP_PUSHBYTES_5.to_u8(),
+            0x62,
+            0x6c,
+            0x6f,
+            0x63,
+            0x6b,                     // OP_PUSHBYTES_5 "block"
+            opcodes::OP_TRUE.to_u8(), // OP_PUSHNUM_1
+            opcodes::all::OP_PUSHBYTES_12.to_u8(),
+            0x62,
+            0x6c,
+            0x6f,
+            0x63,
+            0x6b,
+            0x5f,
+            0x68,
+            0x65,
+            0x69,
+            0x67,
+            0x68,
+            0x74,                      // OP_PUSHBYTES_12 "block_height"
+            opcodes::OP_FALSE.to_u8(), // OP_0
+            opcodes::all::OP_PUSHBYTES_17.to_u8(),
+            0x62,
+            0x61,
+            0x72,
+            0x6b,
+            0x48,
+            0x65,
+            0x6c,
+            0x6c,
+            0x6f,
+            0x2c,
+            0x20,
+            0x77,
+            0x6f,
+            0x72,
+            0x6c,
+            0x64,
+            0x21,                               // OP_PUSHBYTES_17 "barkHello, world!"
+            opcodes::all::OP_ENDIF.to_u8(),     // OP_ENDIF
+            opcodes::all::OP_PUSHNUM_1.to_u8(), // OP_PUSHNUM_1
+        ];
+
+        let res = extract_push_data(mock_script);
+        // single data chunk
+        assert_eq!(res, Some(b"barkHello, world!".to_vec()));
+
+        let mock_script_2 = vec![
+            opcodes::OP_FALSE.to_u8(),   // OP_0
+            opcodes::all::OP_IF.to_u8(), // OP_IF
+            opcodes::all::OP_PUSHBYTES_5.to_u8(),
+            0x62,
+            0x6c,
+            0x6f,
+            0x63,
+            0x6b,                     // OP_PUSHBYTES_5 "block"
+            opcodes::OP_TRUE.to_u8(), // OP_PUSHNUM_1
+            opcodes::all::OP_PUSHBYTES_12.to_u8(),
+            0x62,
+            0x6c,
+            0x6f,
+            0x63,
+            0x6b,
+            0x5f,
+            0x68,
+            0x65,
+            0x69,
+            0x67,
+            0x68,
+            0x74,                      // OP_PUSHBYTES_12 "block_height"
+            opcodes::OP_FALSE.to_u8(), // OP_0
+            opcodes::all::OP_PUSHBYTES_17.to_u8(),
+            0x62,
+            0x61,
+            0x72,
+            0x6b,
+            0x48,
+            0x65,
+            0x6c,
+            0x6c,
+            0x6f,
+            0x2c,
+            0x20,
+            0x77,
+            0x6f,
+            0x72,
+            0x6c,
+            0x64,
+            0x21, // OP_PUSHBYTES_17 "barkHello, world!"
+            opcodes::all::OP_PUSHBYTES_17.to_u8(),
+            0x62,
+            0x61,
+            0x72,
+            0x6b,
+            0x48,
+            0x65,
+            0x6c,
+            0x6c,
+            0x6f,
+            0x2c,
+            0x20,
+            0x77,
+            0x6f,
+            0x72,
+            0x6c,
+            0x64,
+            0x21,
+            opcodes::all::OP_ENDIF.to_u8(),     // OP_ENDIF
+            opcodes::all::OP_PUSHNUM_1.to_u8(), // OP_PUSHNUM_1
+        ];
+
+        let res2 = extract_push_data(mock_script_2);
+        // 2 data chunk
+        assert_eq!(res2, Some(b"barkHello, world!barkHello, world!".to_vec()));
+    }
+
+    #[test]
     fn test_create_taproot_address() {
         let embedded_data = b"Hello, world!";
         let network = Network::Regtest; // Change this as necessary.
         let secp = &Secp256k1::<All>::new();
         let internal_pkey = PrivateKey::from_wif(INTERNAL_PRIVATE_KEY).unwrap();
+
         let key_pair = KeyPair::from_secret_key(secp, &internal_pkey.inner);
         let (x_pub_key, _) = XOnlyPublicKey::from_keypair(&key_pair);
 
@@ -727,7 +813,7 @@ mod tests {
     #[test]
     fn test_read() {
         let relayer = Relayer::new_relayer(&Config::new(
-            "localhost:18332".to_owned(),
+            "localhost:8332".to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
             false,
@@ -736,8 +822,8 @@ mod tests {
         .unwrap();
 
         let height = 10;
-        match relayer.read(height) {
-            Ok(vec) => {
+        match relayer.read_height(height) {
+            Ok(_) => {
                 println!("Successful read");
             }
             Err(e) => panic!("Read failed with error: {:?}", e),
@@ -748,7 +834,7 @@ mod tests {
     fn test_read_transaction() {
         let embedded_data = b"Hello, world!";
         let relayer = Relayer::new_relayer(&Config::new(
-            "localhost:18332".to_owned(),
+            "localhost:8332".to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
             false,
@@ -780,7 +866,5 @@ mod tests {
             }
             Err(e) => panic!("Write failed with error: {:?}", e),
         }
-
-        
     }
 }
