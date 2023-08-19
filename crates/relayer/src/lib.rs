@@ -1,6 +1,7 @@
 use bitcoin::amount::Amount;
 use bitcoin::blockdata::script::Builder;
 use bitcoin::hash_types::Txid;
+use bitcoin::BlockHash;
 
 use bitcoin::address::AddressType;
 use bitcoin::key::PrivateKey;
@@ -49,6 +50,7 @@ pub enum BitcoinError {
     InvalidNetwork,
     ReadErr,
     ReadNoDataErr,
+    GetBlockErr,
 }
 
 // Implement the Display trait for custom error
@@ -66,6 +68,7 @@ impl fmt::Display for BitcoinError {
             BitcoinError::InvalidNetwork => write!(f, "Invalid network"),
             BitcoinError::ReadErr => write!(f, "Read error"),
             BitcoinError::ReadNoDataErr => write!(f, "Read no data in tx error"),
+            BitcoinError::GetBlockErr => write!(f, "Get block error"),
         }
     }
 }
@@ -273,64 +276,59 @@ impl Relayer {
         }
     }
 
-    pub fn read_transaction(&self, hash: &Txid) -> Result<Vec<u8>, BitcoinError> {
-        let tx = match self.client.get_raw_transaction(hash, None) {
-            Ok(bytes) => bytes,
-            Err(_err) => return Err(BitcoinError::InvalidTxHash),
-        };
-
-        if tx.input[0].witness.len() > 1 {
-            let witness = &tx.input[0].witness;
-            let witness = witness[1].to_vec(); // Convert &[u8] to Vec<u8>
-            let push_data = match extract_push_data(witness) {
-                Some(data) => data,
-                None => return Err(BitcoinError::ReadErr),
-            };
-
-            let protocol_id_ref: &[u8] = &PROTOCOL_ID;
-            if push_data.starts_with(protocol_id_ref) {
-                return Ok(push_data[PROTOCOL_ID.len()..].to_vec());
-            }
-        }
-
-        Err(BitcoinError::ReadNoDataErr)
-    }
-
-    pub fn read_height(&self, height: u64) -> Result<Vec<Vec<u8>>, Box<dyn core::fmt::Debug>> {
-        let hash = self.client.get_block_hash(height);
-
-        match hash {
-            Ok(block_hash) => {
-                println!("Succeed to get the blockhash : {}", block_hash);
-            }
-            Err(error) => {
-                panic!("read: failed to get block hash : {}", error);
-            }
-        }
-
-        let block = self.client.get_block(&hash.unwrap());
-
-        match block {
-            Ok(_) => {
-                println!("Succeed to get the block");
-            }
-            Err(error) => {
-                panic!("read: failed to get block : {}", error);
-            }
-        }
-
+    pub fn read_transaction(
+        &self,
+        hash: &Txid,
+        block_hash: Option<&BlockHash>,
+    ) -> Result<Vec<u8>, BitcoinError> {
+        let tx = self
+            .client
+            .get_raw_transaction(hash, block_hash)
+            .map_err(|_| BitcoinError::InvalidTxHash)?;
         let mut data = Vec::new();
 
-        for tx in block.unwrap().txdata.iter() {
-            if let Some(witness) = tx.input[0].witness.nth(1) {
-                if let Some(push_data) = extract_push_data(witness.to_vec()) {
-                    // Skip PROTOCOL_ID
-                    if push_data.starts_with(&PROTOCOL_ID) {
-                        data.push(push_data[PROTOCOL_ID.len()..].to_vec());
-                    }
+        for input in tx.input.iter() {
+            let wit = input.witness.second_to_last();
+            if wit.is_none() {
+                continue;
+            } else {
+                let wit_data = wit.unwrap();
+                let extracted_data = extract_push_data(wit_data.to_vec());
+                if extracted_data.is_some() {
+                    data.append(&mut extracted_data.unwrap());
                 }
             }
         }
+        Ok(data)
+    }
+
+    pub fn read_height(&self, height: u64) -> Result<Vec<u8>, BitcoinError> {
+        let hash = self
+            .client
+            .get_block_hash(height) // get block hash from height
+            .map_err(|_| BitcoinError::GetBlockErr)?;
+
+        let block = self
+            .client
+            .get_block(&hash)
+            .map_err(|_| BitcoinError::GetBlockErr)?;
+        let mut data = Vec::new();
+
+        block.txdata.iter().for_each(|tx| {
+            for input in tx.input.iter() {
+                let wit = input.witness.second_to_last();
+                if wit.is_none() {
+                    continue;
+                } else {
+                    let wit_data = wit.unwrap();
+                    let extracted_data = extract_push_data(wit_data.to_vec());
+                    if extracted_data.is_some() {
+                        data.append(&mut extracted_data.unwrap());
+                    }
+                }
+            }
+        });
+
         Ok(data)
     }
 
@@ -392,7 +390,6 @@ fn extract_push_data(pk_script: Vec<u8>) -> Option<Vec<u8>> {
 
             for leaf in leaves {
                 let mut instructions = leaf.script().instructions();
-
                 // Try to get the first 3 opcodes
                 let op1 = instructions.next();
                 let op2 = instructions.next();
@@ -406,9 +403,9 @@ fn extract_push_data(pk_script: Vec<u8>) -> Option<Vec<u8>> {
                         Some(Ok(Instruction::PushBytes(bytes_sequence))),
                     ) => {
                         if opfalse.is_empty() && bytes_sequence.as_bytes().eq(b"block") {
-                            let op_pushnum1 = instructions.next();
-                            let block_number = instructions.next();
-                            let op_0 = instructions.next();
+                            let _op_pushnum1 = instructions.next();
+                            let _block_number = instructions.next();
+                            let _op_0 = instructions.next();
 
                             let mut data_collector = Vec::new();
 
@@ -437,6 +434,10 @@ fn extract_push_data(pk_script: Vec<u8>) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+
+    use std::str::FromStr;
+
+    use bitcoin_hashes::{sha256d, Hash};
 
     use super::*;
 
@@ -600,7 +601,6 @@ mod tests {
         let output_key = tap_tree.output_key();
         match create_taproot_address(embedded_data, network) {
             Ok(address) => {
-                println!("Taproot address: {}", address);
                 assert!(
                     address.payload.matches_script_pubkey(
                         pay_to_taproot_script(&output_key.to_inner())
@@ -668,31 +668,25 @@ mod tests {
         data_with_id.extend_from_slice(embedded_data);
         // create address with data in script
         let address = create_taproot_address(&data_with_id, network).unwrap();
-        println!("Taproot address: {}", address);
         // do first transaction -> commit
         match relayer.commit_tx(&address) {
             Ok(txid) => {
-                println!("Commit Txid: {}", txid);
                 // from commit txid get the good utxo/output
                 let (commit_idx, commit_output) =
                     find_commit_idx_output_from_txid(&txid, &relayer.client).unwrap();
-                println!("commit_output: {}", commit_output.script_pubkey);
                 // build pubkey, it is the same used to create the address
                 let secp = &Secp256k1::<All>::new();
                 let internal_prkey = PrivateKey::from_wif(INTERNAL_PRIVATE_KEY).unwrap();
                 let internal_pub_key = internal_prkey.public_key(secp);
                 let x_pub_key: XOnlyPublicKey = XOnlyPublicKey::from(internal_pub_key.inner);
-                println!("x_only_pub_key: {}", x_pub_key);
                 // build inscription script
                 let builder: txscript::Builder = build_script(&data_with_id);
                 let pk_script = builder.as_script();
-                println!("pk_script: {}", pk_script);
                 // build taproot tree
                 let mut taproot_builder = TaprootBuilder::new();
                 taproot_builder = taproot_builder.add_leaf(0, pk_script.into()).unwrap();
                 let tap_tree = taproot_builder.finalize(secp, x_pub_key).unwrap();
                 let output_key = tap_tree.output_key();
-                println!("output_key: {}", output_key);
                 // build reveal transaction
                 let mut tx = Transaction {
                     version: 2,
@@ -710,7 +704,6 @@ mod tests {
                 };
                 // outputkey should match commit_output and p2tr_script
                 let p2tr_script = pay_to_taproot_script(&output_key.to_inner()).unwrap();
-                println!("p2tr_script: {}", p2tr_script);
                 assert_eq!(p2tr_script, commit_output.script_pubkey);
                 // min relay fee and build output
                 let tx_out = TxOut {
@@ -725,7 +718,6 @@ mod tests {
                     .ok_or(BitcoinError::ControlBlockErr)
                     .unwrap();
 
-                println!("control_block: {:?}", control_block);
                 // Assemble the witness
                 // Add script and control block to the witness field of the input
                 tx.input[0].witness.push(pk_script.as_bytes());
@@ -766,7 +758,6 @@ mod tests {
         data_with_id.extend_from_slice(embedded_data);
         // create address with data in script
         let address = create_taproot_address(&data_with_id, network).unwrap();
-        println!("Taproot address: {}", address);
         // do first transaction -> commit
         match relayer.commit_tx(&address) {
             Ok(txid) => match relayer.reveal_tx(&data_with_id, &txid) {
@@ -798,10 +789,8 @@ mod tests {
             .map_err(|_| BitcoinError::InvalidNetwork)
             .unwrap();
         assert_eq!(network, Network::Regtest);
-        // append id to data
-        let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
-        data_with_id.extend_from_slice(embedded_data);
-        match relayer.write(&data_with_id) {
+
+        match relayer.write(embedded_data) {
             Ok(txid) => {
                 println!("Txid: {}", txid);
                 println!("Successful write");
@@ -811,7 +800,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read() {
+    fn test_read_height() {
         let relayer = Relayer::new_relayer(&Config::new(
             "localhost:8332".to_owned(),
             "rpcuser".to_owned(),
@@ -820,10 +809,12 @@ mod tests {
             false,
         ))
         .unwrap();
-
-        let height = 10;
+        let height = 1324;
         match relayer.read_height(height) {
-            Ok(_) => {
+            Ok(data) => {
+                // Change this line to whatever data you want.
+                // I appended "barkbark" to the beginning of the data
+                assert_eq!(data, b"barkbarkHello, world!".to_vec());
                 println!("Successful read");
             }
             Err(e) => panic!("Read failed with error: {:?}", e),
@@ -841,30 +832,18 @@ mod tests {
             false,
         ))
         .unwrap();
-        // get network, should bee regtest
-        let blockchain_info = relayer.client.get_blockchain_info().unwrap();
-        let network_name = &blockchain_info.chain;
-        let network = Network::from_core_arg(network_name)
-            .map_err(|_| BitcoinError::InvalidNetwork)
-            .unwrap();
-        assert_eq!(network, Network::Regtest);
-        // append id to data
-        let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
-        data_with_id.extend_from_slice(embedded_data);
 
-        match relayer.write(&data_with_id) {
-            Ok(txid) => {
-                println!("Txid: {}", txid);
-                println!("Successful write");
+        let tx_hash = "a3df602b6e04ae7a2572ef825399c1f5b25bbcee9fe9883997247b327af15bd5";
+        let hash = sha256d::Hash::from_str(tx_hash).unwrap();
+        let txid: Txid = Txid::from_raw_hash(hash);
+        let block_hash = "567e7046d6efc52ea754da016539c0dc508bfb7981f1e4b4d521d4141423e385";
+        let block: BlockHash = BlockHash::from_str(block_hash).unwrap();
 
-                match relayer.read_transaction(&txid) {
-                    Ok(_) => {
-                        println!("Successful read_transaction");
-                    }
-                    Err(e) => panic!("Read_transaction failed with error: {:?}", e),
-                }
+        match relayer.read_transaction(&txid, Some(&block)) {
+            Ok(data) => {
+                assert_eq!(data, b"barkbarkHello, world!".to_vec());
             }
-            Err(e) => panic!("Write failed with error: {:?}", e),
+            Err(e) => panic!("Read_transaction failed with error: {:?}", e),
         }
     }
 }
