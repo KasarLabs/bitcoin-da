@@ -17,10 +17,16 @@ use bitcoin::taproot::NodeInfo;
 use bitcoin::taproot::TapTree;
 use bitcoin::taproot::TaprootBuilder;
 
-// Bitcoincore RPC imports
+use bitcoin::OutPoint;
+use bitcoin::ScriptBuf;
+use bitcoin::Transaction;
+use bitcoin::Witness;
+use bitcoin::{Address, Network};
+use bitcoin::{TxIn, TxOut};
+use bitcoincore_rpc::Auth;
 use bitcoincore_rpc::Client as RpcClient;
-use bitcoincore_rpc::{Auth, Error, RpcApi};
-
+use bitcoincore_rpc::Error;
+use bitcoincore_rpc::RpcApi;
 // Standard imports
 use core::fmt;
 use std::str::FromStr;
@@ -430,7 +436,7 @@ mod tests {
 
     use std::str::FromStr;
 
-    use bitcoin_hashes::{sha256d, Hash};
+    use bitcoin_hashes::sha256d;
 
     use super::*;
 
