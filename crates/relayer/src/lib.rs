@@ -17,18 +17,13 @@ use bitcoin::taproot::NodeInfo;
 use bitcoin::taproot::TapTree;
 use bitcoin::taproot::TaprootBuilder;
 
-use bitcoin::OutPoint;
-use bitcoin::ScriptBuf;
-use bitcoin::Transaction;
-use bitcoin::Witness;
-use bitcoin::{Address, Network};
-use bitcoin::{TxIn, TxOut};
-use bitcoincore_rpc::Auth;
+// Bitcoincore RPC imports
 use bitcoincore_rpc::Client as RpcClient;
-use bitcoincore_rpc::Error;
-use bitcoincore_rpc::RpcApi;
+use bitcoincore_rpc::{Auth, Error, RpcApi};
+
+// Standard imports
 use core::fmt;
-extern crate dotenv;
+use std::str::FromStr;
 
 // Implement all functionnalities for Write/Read
 
@@ -53,7 +48,6 @@ pub enum BitcoinError {
     GetBlockErr,
 }
 
-// Implement the Display trait for custom error
 impl fmt::Display for BitcoinError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -73,7 +67,6 @@ impl fmt::Display for BitcoinError {
     }
 }
 
-// chunk_slice splits input slice into max chunk_size length slices
 pub fn chunk_slice(slice: &[u8], chunk_size: usize) -> Vec<&[u8]> {
     let mut chunks = Vec::new();
     let mut i = 0;
