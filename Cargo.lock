@@ -29,6 +29,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitcoin-da"
+version = "0.1.0"
+dependencies = [
+ "bitcoin",
+ "bitcoin_hashes",
+ "bitcoincore-rpc",
+ "dotenv",
+ "hex",
+ "serde",
+]
+
+[[package]]
 name = "bitcoin-private"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -192,18 +204,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom",
-]
-
-[[package]]
-name = "relayer"
-version = "0.1.0"
-dependencies = [
- "bitcoin",
- "bitcoin_hashes",
- "bitcoincore-rpc",
- "dotenv",
- "hex",
- "serde",
 ]
 
 [[package]]
