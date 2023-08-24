@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "crates/relayer",
+    "crates/bitcoin-da",
 ]
 
 [workspace.package]
