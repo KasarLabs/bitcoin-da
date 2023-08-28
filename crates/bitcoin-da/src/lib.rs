@@ -165,7 +165,6 @@ pub struct Relayer {
 
 impl Relayer {
     // NewRelayer creates a new Relayer instance with the provided Config.
-    //TO TEST
     pub fn new(config: &Config) -> Result<Self, Error> {
         // Set up the connection to the bitcoin RPC server.
         // NOTE: for testing bitcoind can be used in regtest with the following params -
@@ -274,6 +273,7 @@ impl Relayer {
         }
     }
 
+    // read_transaction reads the data from the transaction with the given txid and BlockHash.
     pub fn read_transaction(
         &self,
         hash: &Txid,
@@ -300,6 +300,7 @@ impl Relayer {
         Ok(data)
     }
 
+    // read_height reads the data from the transaction at the given block height.
     pub fn read_height(&self, height: u64) -> Result<Vec<u8>, BitcoinError> {
         let hash = self
             .client
@@ -358,16 +359,8 @@ pub struct Config {
 
 impl Config {
     // Constructor to create a new Config instance
-    pub fn new(
-        host: String,
-        user: String,
-        pass: String,
-    ) -> Self {
-        Config {
-            host,
-            user,
-            pass,
-        }
+    pub fn new(host: String, user: String, pass: String) -> Self {
+        Config { host, user, pass }
     }
 }
 
