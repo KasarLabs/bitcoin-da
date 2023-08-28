@@ -48,12 +48,10 @@ detailed instructions.
 ```rs
 fn test_write() {
         let embedded_data = b"Hello, world!";
-        let relayer = Relayer::new_relayer(&Config::new(
+        let relayer = Relayer::new(&Config::new(
             "localhost:8332".to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
-            false,
-            false,
         ))
         .unwrap();
         // get network, should be regtest

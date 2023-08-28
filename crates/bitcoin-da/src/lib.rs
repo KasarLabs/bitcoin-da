@@ -29,7 +29,6 @@ use bitcoincore_rpc::Error;
 use bitcoincore_rpc::RpcApi;
 // Standard imports
 use core::fmt;
-use std::str::FromStr;
 
 // Implement all functionnalities for Write/Read
 
@@ -161,13 +160,13 @@ fn find_commit_idx_output_from_txid(
 // Relayer is a bitcoin client wrapper which provides reader and writer methods
 // to write binary blobs to the blockchain.
 pub struct Relayer {
-    client: RpcClient,
+    pub client: RpcClient,
 }
 
 impl Relayer {
     // NewRelayer creates a new Relayer instance with the provided Config.
     //TO TEST
-    pub fn new_relayer(config: &Config) -> Result<Self, Error> {
+    pub fn new(config: &Config) -> Result<Self, Error> {
         // Set up the connection to the bitcoin RPC server.
         // NOTE: for testing bitcoind can be used in regtest with the following params -
         // bitcoind -chain=regtest -rpcport=18332 -rpcuser=rpcuser -rpcpassword=rpcpass -fallbackfee=0.000001 -txindex=1
@@ -355,8 +354,6 @@ pub struct Config {
     host: String,
     user: String,
     pass: String,
-    http_post_mode: bool,
-    disable_tls: bool,
 }
 
 impl Config {
@@ -365,15 +362,11 @@ impl Config {
         host: String,
         user: String,
         pass: String,
-        http_post_mode: bool,
-        disable_tls: bool,
     ) -> Self {
         Config {
             host,
             user,
             pass,
-            http_post_mode,
-            disable_tls,
         }
     }
 }
@@ -623,12 +616,10 @@ mod tests {
 
     #[test]
     fn test_commit_tx() {
-        let relayer = Relayer::new_relayer(&Config::new(
+        let relayer = Relayer::new(&Config::new(
             "localhost:8332".to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
-            false,
-            false,
         ))
         .unwrap();
         let embedded_data = b"Hello, world!";
@@ -647,12 +638,10 @@ mod tests {
     fn test_reveal() {
         // Create data and relayer
         let embedded_data = b"Hello, world!";
-        let relayer = Relayer::new_relayer(&Config::new(
+        let relayer = Relayer::new(&Config::new(
             "localhost:8332".to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
-            false,
-            false,
         ))
         .unwrap();
         // get network, should be regtest
@@ -737,12 +726,10 @@ mod tests {
     #[test]
     fn test_reveal2() {
         let embedded_data = b"Hello, world!";
-        let relayer = Relayer::new_relayer(&Config::new(
+        let relayer = Relayer::new(&Config::new(
             "localhost:8332".to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
-            false,
-            false,
         ))
         .unwrap();
         // get network, should be regtest
@@ -773,12 +760,10 @@ mod tests {
     #[test]
     fn test_write() {
         let embedded_data = b"Hello, world!";
-        let relayer = Relayer::new_relayer(&Config::new(
+        let relayer = Relayer::new(&Config::new(
             "localhost:8332".to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
-            false,
-            false,
         ))
         .unwrap();
         // get network, should be regtest
@@ -800,12 +785,10 @@ mod tests {
 
     #[test]
     fn test_read_height() {
-        let relayer = Relayer::new_relayer(&Config::new(
+        let relayer = Relayer::new(&Config::new(
             "localhost:8332".to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
-            false,
-            false,
         ))
         .unwrap();
         let height = 1324;
@@ -823,12 +806,10 @@ mod tests {
     #[test]
     fn test_read_transaction() {
         let embedded_data = b"Hello, world!";
-        let relayer = Relayer::new_relayer(&Config::new(
+        let relayer = Relayer::new(&Config::new(
             "localhost:8332".to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
-            false,
-            false,
         ))
         .unwrap();
 
