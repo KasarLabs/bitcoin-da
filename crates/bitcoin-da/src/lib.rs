@@ -761,6 +761,7 @@ mod tests {
         .unwrap();
         // get network, should be regtest
         let blockchain_info = relayer.client.get_blockchain_info().unwrap();
+        println!("blockchain_info: {:?}", blockchain_info);
         let network_name = &blockchain_info.chain;
         let network = Network::from_core_arg(network_name)
             .map_err(|_| BitcoinError::InvalidNetwork)
@@ -784,12 +785,12 @@ mod tests {
             "rpcpass".to_owned(),
         ))
         .unwrap();
-        let height = 1324;
+        let height = 415;
         match relayer.read_height(height) {
             Ok(data) => {
                 // Change this line to whatever data you want.
                 // I appended "barkbark" to the beginning of the data
-                assert_eq!(data, b"barkbarkHello, world!".to_vec());
+                assert_eq!(data, b"barkHello, world!".to_vec());
                 println!("Successful read");
             }
             Err(e) => panic!("Read failed with error: {:?}", e),
@@ -798,7 +799,6 @@ mod tests {
 
     #[test]
     fn test_read_transaction() {
-        let embedded_data = b"Hello, world!";
         let relayer = Relayer::new(&Config::new(
             "37.187.123.130:8332".to_owned(),
             "rpcuser".to_owned(),
@@ -806,15 +806,16 @@ mod tests {
         ))
         .unwrap();
 
-        let tx_hash = "a3df602b6e04ae7a2572ef825399c1f5b25bbcee9fe9883997247b327af15bd5";
+        let tx_hash = "9b198246b4f7739a7413f30399931c497264a9643e378f7ca4a3b9dc0d911c40";
         let hash = sha256d::Hash::from_str(tx_hash).unwrap();
         let txid: Txid = Txid::from_raw_hash(hash);
-        let block_hash = "567e7046d6efc52ea754da016539c0dc508bfb7981f1e4b4d521d4141423e385";
+        let block_hash = "6ddae685fd548e62eb0d1253346d1a2578dbd840ffcf28025c84c7c44d6b31db";
         let block: BlockHash = BlockHash::from_str(block_hash).unwrap();
 
         match relayer.read_transaction(&txid, Some(&block)) {
             Ok(data) => {
-                assert_eq!(data, b"barkbarkHello, world!".to_vec());
+                println!("Print data: {:?}", data);
+                assert_eq!(data, b"barkHello, world!".to_vec());
             }
             Err(e) => panic!("Read_transaction failed with error: {:?}", e),
         }
