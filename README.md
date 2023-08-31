@@ -6,6 +6,8 @@ It provides `write` and `read` functions. This can be included in any sequencer 
 
 This repo is rust adaptation of rollkit's [bitcoin-da](https://github.com/rollkit/bitcoin-da).
 
+The code isn't production ready. It is highly experimental.
+
 ## Prerequisites
 
 - Install `bitcoind` & `bitcoin-cli`
