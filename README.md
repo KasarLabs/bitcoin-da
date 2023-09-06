@@ -80,6 +80,10 @@ You can run tests with:
 cargo test
 ```
 
+Before running the test, you must have a bitcoin node running either on regtest or signet.
+Then you need to change the rpc url accordingly.
+You also need to comment/uncomment the required network in each test function.
+
 ## License
 
 This project is licensed under the Apache 2.0 license.
