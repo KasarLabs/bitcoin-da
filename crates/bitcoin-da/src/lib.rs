@@ -30,8 +30,6 @@ use bitcoincore_rpc::RpcApi;
 // Standard imports
 use core::fmt;
 
-// Implement all functionnalities for Write/Read
-
 const PROTOCOL_ID: [u8; 4] = [0x62, 0x61, 0x72, 0x6b]; // 'bark' in ASCII
 
 // Internal key pair is used for tweaking
@@ -140,13 +138,32 @@ fn find_commit_idx_output_from_txid(
     txid: &Txid,
     client: &RpcClient,
 ) -> Result<(usize, TxOut), BitcoinError> {
-    let raw_commit: Transaction = client.get_raw_transaction(txid, None).unwrap();
+    let raw_commit_result: Result<Transaction, BitcoinError> =
+        match client.get_raw_transaction(txid, None) {
+            Ok(tx) => Ok(tx),
+            Err(_) => {
+                let tx_res = client.get_transaction(txid, None);
+                match tx_res {
+                    Ok(get_tx_result) => get_tx_result
+                        .transaction()
+                        .map_err(|_| BitcoinError::InvalidTxHash),
+                    Err(err) => {
+                        eprintln!("Error: {:?}", err);
+                        Err(BitcoinError::InvalidTxHash)
+                    }
+                }
+            }
+        };
+
+    let raw_commit = raw_commit_result?;
+
+    // let raw_commit: Transaction = raw_commit_res?;
     let mut commit_idx = None;
     let mut commit_output = None;
     // look for the good UTXO
     for (i, out) in raw_commit.output.iter().enumerate() {
         // fee amount
-        if out.value == 100000 {
+        if out.value == 10000 {
             commit_idx = Some(i);
             commit_output = Some(out);
             break;
@@ -196,11 +213,23 @@ impl Relayer {
         match addr.address_type() {
             Some(AddressType::P2tr) => {
                 // fee to cover the cost
-                let amount = Amount::from_btc(0.001).map_err(|_| BitcoinError::BadAmount)?;
+                let amount = Amount::from_btc(0.0001).map_err(|_| BitcoinError::BadAmount)?;
                 let hash: Txid = self
                     .client
-                    .send_to_address(addr, amount, None, None, None, None, None, None)
-                    .map_err(|_| BitcoinError::SendToAddressError)?;
+                    .send_to_address(
+                        addr,
+                        amount,
+                        None,
+                        None,
+                        Some(false),
+                        Some(true),
+                        None,
+                        None,
+                    )
+                    .map_err(|err| {
+                        eprintln!("Error: {:?}", err);
+                        BitcoinError::SendToAddressError
+                    })?;
                 Ok(hash)
             }
             _ => Err(BitcoinError::InvalidAddress),
@@ -250,7 +279,7 @@ impl Relayer {
         assert_eq!(p2tr_script, commit_output.script_pubkey);
         // min relay fee and build output
         let tx_out = TxOut {
-            value: 50000, // in satoshi
+            value: 1000, // in satoshi
             script_pubkey: p2tr_script,
         };
         tx.output.push(tx_out);
@@ -269,7 +298,10 @@ impl Relayer {
         let txid = self.client.send_raw_transaction(&tx);
         match txid {
             Ok(hash) => Ok(hash),
-            Err(_err) => Err(BitcoinError::RevealErr),
+            Err(err) => {
+                eprintln!("Error: {:?}", err);
+                Err(BitcoinError::RevealErr)
+            }
         }
     }
 
@@ -338,6 +370,7 @@ impl Relayer {
         let network = Network::from_core_arg(network_name)
             .map_err(|_| BitcoinError::InvalidNetwork)
             .unwrap();
+        println!("Network: {:?}", network);
         // append id to data
         let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
         data_with_id.extend_from_slice(data);
@@ -570,7 +603,9 @@ mod tests {
     #[test]
     fn test_create_taproot_address() {
         let embedded_data = b"Hello, world!";
-        let network = Network::Regtest; // Change this as necessary.
+        // let network = Network::Regtest; // Change this as necessary.
+        let network = Network::Signet;
+
         let secp = &Secp256k1::<All>::new();
         let internal_pkey = PrivateKey::from_wif(INTERNAL_PRIVATE_KEY).unwrap();
 
@@ -610,15 +645,18 @@ mod tests {
     #[test]
     fn test_commit_tx() {
         let relayer = Relayer::new(&Config::new(
-            "localhost:8332".to_owned(),
+            "141.136.35.8:38332".to_owned(), // SIGNET
+            // "localhost:8332".to_owned(), // REGNET
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
         ))
         .unwrap();
         let embedded_data = b"Hello, world!";
-        let network = Network::Regtest;
-        let test_addr: Address = create_taproot_address(embedded_data, network).unwrap();
+        // let network = Network::Regtest;
+        let network = Network::Signet;
 
+        let test_addr: Address = create_taproot_address(embedded_data, network).unwrap();
+        println!("Test address: {}", test_addr);
         match relayer.commit_tx(&test_addr) {
             Ok(txid) => {
                 println!("Commit Txid: {}", txid);
@@ -632,7 +670,8 @@ mod tests {
         // Create data and relayer
         let embedded_data = b"Hello, world!";
         let relayer = Relayer::new(&Config::new(
-            "localhost:8332".to_owned(),
+            "141.136.35.8:38332".to_owned(), // SIGNET
+            // "localhost:8332".to_owned(), // REGNET
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
         ))
@@ -643,7 +682,9 @@ mod tests {
         let network = Network::from_core_arg(network_name)
             .map_err(|_| BitcoinError::InvalidNetwork)
             .unwrap();
-        assert_eq!(network, Network::Regtest);
+        // assert_eq!(network, Network::Regtest);
+        assert_eq!(network, Network::Signet);
+
         // append id to data
         let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
         data_with_id.extend_from_slice(embedded_data);
@@ -720,7 +761,8 @@ mod tests {
     fn test_reveal2() {
         let embedded_data = b"Hello, world!";
         let relayer = Relayer::new(&Config::new(
-            "localhost:8332".to_owned(),
+            "141.136.35.8:38332".to_owned(), // SIGNET
+            // "localhost:8332".to_owned(), // REGNET
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
         ))
@@ -754,7 +796,8 @@ mod tests {
     fn test_write() {
         let embedded_data = b"Hello, world!";
         let relayer = Relayer::new(&Config::new(
-            "localhost:8332".to_owned(),
+            "141.136.35.8:38332".to_owned(), // SIGNET
+            // "localhost:8332".to_owned(), // REGNET
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
         ))
@@ -765,7 +808,8 @@ mod tests {
         let network = Network::from_core_arg(network_name)
             .map_err(|_| BitcoinError::InvalidNetwork)
             .unwrap();
-        assert_eq!(network, Network::Regtest);
+        // assert_eq!(network, Network::Regtest);
+        assert_eq!(network, Network::Signet);
 
         match relayer.write(embedded_data) {
             Ok(txid) => {
@@ -779,17 +823,18 @@ mod tests {
     #[test]
     fn test_read_height() {
         let relayer = Relayer::new(&Config::new(
-            "localhost:8332".to_owned(),
+            // "141.136.35.8:38332".to_owned(), // SIGNET
+            "localhost:8332".to_owned(), // REGNET
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
         ))
         .unwrap();
-        let height = 1324;
+        let height = 112; // change to whatever height that contains a tx
         match relayer.read_height(height) {
             Ok(data) => {
                 // Change this line to whatever data you want.
                 // I appended "barkbark" to the beginning of the data
-                assert_eq!(data, b"barkbarkHello, world!".to_vec());
+                assert_eq!(data, b"barkHello, world!".to_vec());
                 println!("Successful read");
             }
             Err(e) => panic!("Read failed with error: {:?}", e),
@@ -798,7 +843,6 @@ mod tests {
 
     #[test]
     fn test_read_transaction() {
-        let embedded_data = b"Hello, world!";
         let relayer = Relayer::new(&Config::new(
             "localhost:8332".to_owned(),
             "rpcuser".to_owned(),
