@@ -610,7 +610,7 @@ mod tests {
     #[test]
     fn test_commit_tx() {
         let relayer = Relayer::new(&Config::new(
-            "141.136.35.8:38332".to_owned(),
+            "37.187.123.130:8332".to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
         ))
@@ -632,7 +632,7 @@ mod tests {
         // Create data and relayer
         let embedded_data = b"Hello, world!";
         let relayer = Relayer::new(&Config::new(
-            "141.136.35.8:38332".to_owned(),
+            "37.187.123.130:8332".to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
         ))
@@ -720,7 +720,7 @@ mod tests {
     fn test_reveal2() {
         let embedded_data = b"Hello, world!";
         let relayer = Relayer::new(&Config::new(
-            "141.136.35.8:38332".to_owned(),
+            "37.187.123.130:8332".to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
         ))
@@ -754,7 +754,7 @@ mod tests {
     fn test_write() {
         let embedded_data = b"Hello, world!";
         let relayer = Relayer::new(&Config::new(
-            "141.136.35.8:38332".to_owned(),
+            "37.187.123.130:8332".to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
         ))
@@ -780,7 +780,7 @@ mod tests {
     #[test]
     fn test_read_height() {
         let relayer = Relayer::new(&Config::new(
-            "141.136.35.8:38332".to_owned(),
+            "37.187.123.130:8332".to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
         ))
@@ -800,7 +800,7 @@ mod tests {
     #[test]
     fn test_read_transaction() {
         let relayer = Relayer::new(&Config::new(
-            "141.136.35.8:38332".to_owned(),
+            "37.187.123.130:8332".to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
         ))
