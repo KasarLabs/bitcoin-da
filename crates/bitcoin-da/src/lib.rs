@@ -156,8 +156,6 @@ fn find_commit_idx_output_from_txid(
         };
 
     let raw_commit = raw_commit_result?;
-
-    // let raw_commit: Transaction = raw_commit_res?;
     let mut commit_idx = None;
     let mut commit_output = None;
     // look for the good UTXO
