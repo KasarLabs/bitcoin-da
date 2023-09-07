@@ -383,9 +383,9 @@ impl Relayer {
 }
 
 pub struct Config {
-    host: String,
-    user: String,
-    pass: String,
+    pub host: String,
+    pub user: String,
+    pub pass: String,
 }
 
 impl Config {
