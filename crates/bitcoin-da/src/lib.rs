@@ -569,7 +569,6 @@ pub fn extract_push_data(pk_script: Vec<u8>) -> Option<Vec<u8>> {
             }
         }
     } else {
-        // Panicking might not be the best idea; consider logging the error and returning None
         panic!("extract_push_data: failed to get tap tree");
     }
     None
