@@ -20,7 +20,7 @@
 
 This crate allows to use bitcoin as a data availability layer.
 
-It provides `write` and `read` functions. This can be included in any sequencer written in rust.
+It provides `write` and `read` functions. This can be included in any sequencer written in rust and has been built specificaly for [Madara](https://github.com/keep-starknet-strange/madara).
 
 This repo is rust adaptation of rollkit's [bitcoin-da](https://github.com/rollkit/bitcoin-da).
 
