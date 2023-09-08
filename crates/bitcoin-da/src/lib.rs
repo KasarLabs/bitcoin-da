@@ -456,7 +456,10 @@ pub fn last_published_state(relayer: &Relayer) -> Result<Vec<ListTransactionResu
     let last_tx = relayer
         .client
         .list_transactions(Some("*"), Some(15), None, Some(true))
-        .map_err(|_| BitcoinError::InvalidNetwork)?;
+        .map_err(|err| {
+            println!("Error: {:?}", err);
+            BitcoinError::InvalidNetwork
+        })?;
     println!("Last transactions fetched: {:?}", last_tx);
 
     // 5. Returning the rollup height
