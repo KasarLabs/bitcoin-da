@@ -382,6 +382,23 @@ impl Relayer {
         let hash2: Txid = self.reveal_tx(&data_with_id, &hash)?;
         Ok(hash2)
     }
+    
+    pub fn last_published_state(&self) -> Result<Vec<ListTransactionResult>, BitcoinError> {
+        // 2. Fetching the `last_tx` transactions
+        println!("Fetching last transactions...");
+        let last_tx = self
+            .client
+            .list_transactions(Some("*"), Some(15), None, Some(true))
+            .map_err(|err| {
+                println!("Error: {:?}", err);
+                BitcoinError::InvalidNetwork
+            })?;
+        println!("Last transactions fetched: {:?}", last_tx);
+    
+        // 5. Returning the rollup height
+        println!("Returning rollup height...");
+        Ok(last_tx)
+    }
 }
 
 pub struct Config {
@@ -450,22 +467,7 @@ fn extract_push_data(pk_script: Vec<u8>) -> Option<Vec<u8>> {
     }
 }
 
-pub fn last_published_state(relayer: &Relayer) -> Result<Vec<ListTransactionResult>, BitcoinError> {
-    // 2. Fetching the `last_tx` transactions
-    println!("Fetching last transactions...");
-    let last_tx = relayer
-        .client
-        .list_transactions(Some("*"), Some(15), None, Some(true))
-        .map_err(|err| {
-            println!("Error: {:?}", err);
-            BitcoinError::InvalidNetwork
-        })?;
-    println!("Last transactions fetched: {:?}", last_tx);
 
-    // 5. Returning the rollup height
-    println!("Returning rollup height...");
-    Ok(last_tx)
-}
 
 #[cfg(test)]
 mod tests {
