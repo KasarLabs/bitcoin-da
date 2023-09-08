@@ -30,10 +30,10 @@ use bitcoincore_rpc::RpcApi;
 // Standard imports
 use core::fmt;
 
-const PROTOCOL_ID: [u8; 4] = [0x62, 0x61, 0x72, 0x6b]; // 'bark' in ASCII
+pub const PROTOCOL_ID: [u8; 4] = [0x62, 0x61, 0x72, 0x6b]; // 'bark' in ASCII
 
 // Internal key pair is used for tweaking
-const INTERNAL_PRIVATE_KEY: &str = "5JGgKfRy6vEcWBpLJV5FXUfMGNXzvdWzQHUM1rVLEUJfvZUSwvS";
+pub const INTERNAL_PRIVATE_KEY: &str = "5JGgKfRy6vEcWBpLJV5FXUfMGNXzvdWzQHUM1rVLEUJfvZUSwvS";
 
 #[derive(Debug)]
 pub enum BitcoinError {
@@ -101,7 +101,7 @@ pub fn chunk_slice(slice: &[u8], chunk_size: usize) -> Vec<&[u8]> {
 /// * `embedded_data` - The data to be embedded into the transaction script.
 /// # Returns
 /// A `txscript::Builder` containing the formed Bitcoin script.
-fn build_script(embedded_data: &[u8]) -> txscript::Builder {
+pub fn build_script(embedded_data: &[u8]) -> txscript::Builder {
     let mut builder = txscript::Builder::new();
     builder = builder
         // push false onto the stack
@@ -187,7 +187,7 @@ pub fn pay_to_taproot_script(taproot_key: &XOnlyPublicKey) -> Result<ScriptBuf, 
 ///
 /// A `Result` which is either a tuple of the index and `TxOut` of the
 /// commit transaction output, or a `BitcoinError`.
-fn find_commit_idx_output_from_txid(
+pub fn find_commit_idx_output_from_txid(
     txid: &Txid,
     client: &RpcClient,
 ) -> Result<(usize, TxOut), BitcoinError> {
@@ -522,7 +522,7 @@ impl Config {
 ///
 /// An `Option` containing the extracted data as a `Vec<u8>` if the required pattern was found,
 /// otherwise `None`.
-fn extract_push_data(pk_script: Vec<u8>) -> Option<Vec<u8>> {
+pub fn extract_push_data(pk_script: Vec<u8>) -> Option<Vec<u8>> {
     let node_info =
         NodeInfo::new_leaf_with_ver(ScriptBuf::from_bytes(pk_script), LeafVersion::TapScript);
 
