@@ -27,6 +27,8 @@ use bitcoincore_rpc::Auth;
 use bitcoincore_rpc::Client as RpcClient;
 use bitcoincore_rpc::Error;
 use bitcoincore_rpc::RpcApi;
+use bitcoincore_rpc::bitcoincore_rpc_json::GetTransactionResultDetailCategory;
+use bitcoincore_rpc::bitcoincore_rpc_json::ListTransactionResult;
 // Standard imports
 use core::fmt;
 
@@ -448,6 +450,30 @@ fn extract_push_data(pk_script: Vec<u8>) -> Option<Vec<u8>> {
     }
 }
 
+pub fn last_published_state() -> Result<u32, BitcoinError> {
+    let relayer = Relayer::new(&Config::new(
+        "37.187.123.130:8332".to_owned(), // SIGNET
+        // "localhost:8332".to_owned(), // REGNET
+        "rpcuser".to_owned(),
+        "rpcpass".to_owned(),
+    )).unwrap();
+    let last_tx = relayer.client.list_transactions(Some("*"), Some(15), None, Some(true)).map_err(|_| BitcoinError::InvalidNetwork)?;
+    let mut filtered_txs: Vec<&ListTransactionResult> =
+        last_tx.iter().filter(|tx| tx.detail.category == GetTransactionResultDetailCategory::Send).collect();
+    filtered_txs.sort_by(|a, b| a.info.blockheight.cmp(&b.info.blockheight));
+    let most_recent_tx = filtered_txs.last();
+    println!("{:?}", last_tx);
+    let last_data_raw = match most_recent_tx {
+        Some(tx) => relayer
+            .read_transaction(&tx.info.txid, tx.info.blockhash.as_ref())
+            .map_err(|_| BitcoinError::InvalidNetwork),
+        None => return Err(BitcoinError::InvalidNetwork),
+    };
+
+    // change to rollup height
+    Ok(1)
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -643,8 +669,8 @@ mod tests {
     #[test]
     fn test_commit_tx() {
         let relayer = Relayer::new(&Config::new(
-            // "YOUR_NODE_IP:38332".to_owned(), // SIGNET
-            "localhost:8332".to_owned(), // REGNET
+            "37.187.123.130:8332".to_owned(), // SIGNET
+            // "localhost:8332".to_owned(), // REGNET
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
         ))
@@ -652,12 +678,32 @@ mod tests {
         let embedded_data = b"Hello, world!";
         // let network = Network::Regtest;
         let network = Network::Signet;
+        match relayer
+            .client
+            .list_transactions(Some("*"), Some(15), None, Some(true))
+        {
+            Ok(txs) => {
+                println!("Transactions: {:?}", txs);
+            }
+            Err(e) => panic!("Test failed with error: {:?}", e),
+        }
+    }
 
-        let test_addr: Address = create_taproot_address(embedded_data, network).unwrap();
-        println!("Test address: {}", test_addr);
-        match relayer.commit_tx(&test_addr) {
-            Ok(txid) => {
-                println!("Commit Txid: {}", txid);
+    #[test]
+    fn test_commit_tx_2() {
+        let relayer = Relayer::new(&Config::new(
+            "37.187.123.130:8332".to_owned(), // SIGNET
+            // "localhost:8332".to_owned(), // REGNET
+            "rpcuser".to_owned(),
+            "rpcpass".to_owned(),
+        ))
+        .unwrap();
+        match relayer
+            .client
+            .list_transactions(Some("*"), Some(15), None, Some(true))
+        {
+            Ok(txs) => {
+                println!("Transactions: {:?}", txs);
             }
             Err(e) => panic!("Test failed with error: {:?}", e),
         }
