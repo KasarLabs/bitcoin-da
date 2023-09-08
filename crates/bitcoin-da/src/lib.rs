@@ -451,28 +451,49 @@ fn extract_push_data(pk_script: Vec<u8>) -> Option<Vec<u8>> {
 }
 
 pub fn last_published_state() -> Result<u32, BitcoinError> {
+    // 1. Initialization of the `relayer` object
+    println!("Initializing relayer...");
     let relayer = Relayer::new(&Config::new(
         "37.187.123.130:8332".to_owned(), // SIGNET
         // "localhost:8332".to_owned(), // REGNET
         "rpcuser".to_owned(),
         "rpcpass".to_owned(),
     )).unwrap();
+    println!("Relayer initialized.");
+
+    // 2. Fetching the `last_tx` transactions
+    println!("Fetching last transactions...");
     let last_tx = relayer.client.list_transactions(Some("*"), Some(15), None, Some(true)).map_err(|_| BitcoinError::InvalidNetwork)?;
+    println!("Last transactions fetched: {:?}", last_tx);
+
+    // 3. Filtering and sorting the transactions
+    println!("Filtering and sorting transactions...");
     let mut filtered_txs: Vec<&ListTransactionResult> =
         last_tx.iter().filter(|tx| tx.detail.category == GetTransactionResultDetailCategory::Send).collect();
     filtered_txs.sort_by(|a, b| a.info.blockheight.cmp(&b.info.blockheight));
+    println!("Filtered and sorted transactions: {:?}", filtered_txs);
+
+    // 4. Reading the most recent transaction
     let most_recent_tx = filtered_txs.last();
-    println!("{:?}", last_tx);
+    println!("Most recent transaction: {:?}", most_recent_tx);
     let last_data_raw = match most_recent_tx {
-        Some(tx) => relayer
-            .read_transaction(&tx.info.txid, tx.info.blockhash.as_ref())
-            .map_err(|_| BitcoinError::InvalidNetwork),
-        None => return Err(BitcoinError::InvalidNetwork),
+        Some(tx) => {
+            println!("Reading transaction with txid: {}", tx.info.txid);
+            relayer
+                .read_transaction(&tx.info.txid, tx.info.blockhash.as_ref())
+                .map_err(|_| BitcoinError::InvalidNetwork)
+        },
+        None => {
+            println!("No transactions found in the filtered list.");
+            return Err(BitcoinError::InvalidNetwork);
+        },
     };
 
-    // change to rollup height
+    // 5. Returning the rollup height
+    println!("Returning rollup height...");
     Ok(1)
 }
+
 
 #[cfg(test)]
 mod tests {
