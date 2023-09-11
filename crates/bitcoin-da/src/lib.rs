@@ -382,19 +382,34 @@ impl Relayer {
         let hash2: Txid = self.reveal_tx(&data_with_id, &hash)?;
         Ok(hash2)
     }
-    
+
     pub fn last_published_state(&self) -> Result<Vec<ListTransactionResult>, BitcoinError> {
         // 2. Fetching the `last_tx` transactions
         println!("Fetching last transactions...");
         let last_tx = self
             .client
-            .list_transactions(Some("*"), Some(15), None, Some(true))
+            .list_transactions(Some("*"), Some(5), None, Some(true))
             .map_err(|err| {
                 println!("Error: {:?}", err);
                 BitcoinError::InvalidNetwork
             })?;
         println!("Last transactions fetched: {:?}", last_tx);
-    
+        let mut filtered_txs: Vec<&ListTransactionResult> = last_tx
+            .iter()
+            .filter(|tx| tx.detail.category == GetTransactionResultDetailCategory::Send)
+            .collect();
+        filtered_txs.sort_by(|a, b| a.info.blockheight.cmp(&b.info.blockheight));
+        let most_recent_tx = filtered_txs.last();
+
+        let last_data_raw = match most_recent_tx {
+            Some(tx) => println!("Last data: {:?}", tx),
+            // Some(tx) => self
+            //     .relayer
+            //     .read_transaction(&tx.info.txid, tx.info.blockhash.as_ref())
+            //     .map_err(|e| anyhow::anyhow!("bitcoin read err: {e}"))?,
+            None => println!("No data found"),
+        };
+
         // 5. Returning the rollup height
         println!("Returning rollup height...");
         Ok(last_tx)
@@ -466,8 +481,6 @@ fn extract_push_data(pk_script: Vec<u8>) -> Option<Vec<u8>> {
         Err(_) => panic!("extract_push_data: failed to get tap tree"),
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
