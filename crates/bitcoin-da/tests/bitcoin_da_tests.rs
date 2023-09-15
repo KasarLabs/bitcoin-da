@@ -418,6 +418,8 @@ mod tests {
         let network = Network::from_core_arg(network_name)
             .map_err(|_| BitcoinError::InvalidNetwork)
             .unwrap();
+        // Change this, if required
+        // assert_eq!(network, Network::Signet);
         assert_eq!(network, Network::Regtest);
 
         // ==================================
