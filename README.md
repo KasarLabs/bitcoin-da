@@ -45,7 +45,7 @@ Before you can proceed with using or testing this crate, there are a few setup s
     bitcoin-cli -regtest -generate 150
     ```
 
-**Note**: These steps are primarily for manual testing. Automated tests will handle these operations for you.
+**Note**: These steps are for both manual and automatic testing. For both cases you will still need to start `bitcoind` separately. Additionally, automated tests will only handle some `bitcoin-cli` operations such as `loadwallet` and setting the `test` label for the wallet in use.
 
 ## Building the Library
 
@@ -88,7 +88,7 @@ fn test_write() {
 
 ## Automated Testing with the Provided Script
 
-This repo comes with an automation script (`run_tests.sh`) which simplifies the testing process by handling node operations and test configurations.
+This repo comes with an automation script (`run_tests.sh`) which simplifies the testing process by handling node operations and test configurations. The script assumes a bitcoin node is already running.
 
 ### Preparations:
 
@@ -97,29 +97,31 @@ This repo comes with an automation script (`run_tests.sh`) which simplifies the 
   chmod +x run_tests.sh
   ```
 
-### Command Usage:
+1. **Setup**: Ensure a Bitcoin node is running on the desired network (`regtest` or `signet`), and modify the RPC URL in your configuration as necessary. Depending on the test, you might also need to comment/uncomment the required network in the test function.
+
+2. **Command Usage**:
 
 ```bash
-./run_tests.sh -n [network] -l [log level] -b [backtrace] -t [test name]
+./run_tests.sh -l [log level] -b [backtrace] -t [test name] -L
 ```
 
-- `-n` Network type (`regnet` or `signet`).
 - `-l` Log level (`info`, `debug`, or `none`).
 - `-b` Enable(1)/Disable(0) backtrace.
 - `-t` Specify a test name (optional).
+- `-L` Include tests that take a long time to complete in signet due to time it takes to complete a block. These tests run fast in regtest.
 
 ### Examples:
 
-Run all tests on `regnet` with `debug` logs and backtrace:
+Run all tests with `debug` logs and backtrace:
 
 ```bash
-./run_tests.sh -n regnet -l debug -b 1
+./run_tests.sh -l debug -b 1
 ```
 
-Run the `test_example` on `signet` with `info` logs:
+Run the `test_example` with `info` logs:
 
 ```bash
-./run_tests.sh -n signet -l info -t test_example
+./run_tests.sh -l info -t test_example
 ```
 
 ## Manual Tests
@@ -130,9 +132,9 @@ If you prefer manual testing:
 
 2. **Running Tests**:
 
-  - **Regnet**:
+  - **regtest**:
     ```shell
-    cargo test --features regnet
+    cargo test --features regtest
     ```
 
   - **Signet**:
@@ -147,7 +149,7 @@ If you prefer manual testing:
 
   - **Logs + Backtrace**:
     ```shell
-    RUST_LOG=debug RUST_BACKTRACE=1 cargo test --features regnet -- --nocapture
+    RUST_LOG=debug RUST_BACKTRACE=1 cargo test --features regtest -- --nocapture
     ```
 
 ## License

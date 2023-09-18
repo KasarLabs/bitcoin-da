@@ -1,21 +1,14 @@
 #!/bin/bash
 
 # Default values
-NETWORK="regnet"
+NETWORK="regtest"
 LOG_LEVEL="none"
+LONG_TESTS=0
 BACKTRACE=0
 
 # Parse command-line arguments
-while getopts "n:l:b:t:" opt; do
+while getopts "l:b:t:L" opt; do
   case $opt in
-    n)
-      if [ "$OPTARG" == "signet" ] || [ "$OPTARG" == "regnet" ]; then
-        NETWORK=$OPTARG
-      else
-        echo "Invalid network option. Use 'regnet' or 'signet'."
-        exit 1
-      fi
-      ;;
     l)
     if [ "$OPTARG" == "debug" ] || [ "$OPTARG" == "info" ] || [ "$OPTARG" == "none" ]; then
         LOG_LEVEL=$OPTARG
@@ -30,6 +23,9 @@ while getopts "n:l:b:t:" opt; do
     t)
       TEST_NAME="$OPTARG"
       ;;
+    L)
+      LONG_TESTS=1
+      ;;
     \?)
       echo "Invalid option: -$OPTARG" >&2
       exit 1
@@ -41,36 +37,15 @@ while getopts "n:l:b:t:" opt; do
   esac
 done
 
-# Copy the bitcoin configuration from the current directory to ~/.bitcoin
-cp ./bitcoin.conf ~/.bitcoin/
-
-# Modify the ~/.bitcoin/bitcoin.conf based on the chosen network
-if [ "$NETWORK" == "regnet" ]; then
-    sed -i 's/^#\(regtest=1\)/\1/' ~/.bitcoin/bitcoin.conf
-    sed -i 's/^\(signet=1\)/#\1/' ~/.bitcoin/bitcoin.conf
-elif [ "$NETWORK" == "signet" ]; then
-    sed -i 's/^#\(signet=1\)/\1/' ~/.bitcoin/bitcoin.conf
-    sed -i 's/^\(regtest=1\)/#\1/' ~/.bitcoin/bitcoin.conf
+# Derive the NETWORK value from ~/.bitcoin/bitcoin.conf
+if grep -q '^regtest=1' ~/.bitcoin/bitcoin.conf; then
+    NETWORK="regtest"
+elif grep -q '^signet=1' ~/.bitcoin/bitcoin.conf; then
+    NETWORK="signet"
 else
-    echo "Invalid network specified."
+    echo "No valid network configuration found in bitcoin.conf."
     exit 1
 fi
-
-# Start the Bitcoin daemon with the specific network
-if [ "$NETWORK" == "regnet" ]; then
-    bitcoind -regtest
-elif [ "$NETWORK" == "signet" ]; then
-    bitcoind -signet
-else
-    echo "Invalid network specified."
-    exit 1
-fi
-
-# Sleep for a few seconds to allow the daemon to initialize
-sleep 5
-
-# Create a wallet if it doesn't exist
-bitcoin-cli createwallet test 2>/dev/null
 
 # Load the wallet
 bitcoin-cli loadwallet test 2>/dev/null
@@ -90,8 +65,7 @@ get_address_by_label() {
 
 
 # Conditional block generation based on the network
-if [ "$NETWORK" == "regnet" ]; then
-    bitcoin-cli -regtest -generate 150
+if [ "$NETWORK" == "regtest" ]; then
     WALLET_ADDRESS=$(get_address_by_label "regtest")
 elif [ "$NETWORK" == "signet" ]; then
     echo "Transactions must be confirmed on signet (this might take some time)."
@@ -103,24 +77,29 @@ else
     exit 1
 fi
 
+FEATURES="$NETWORK"
+
+if [ $LONG_TESTS -eq 1 ]; then
+    FEATURES="$FEATURES,long_tests"
+fi
+
 # Create a temp file to capture the output
 TEMP_FILE=$(mktemp)
 
 # Call the Rust test and redirect output to the temp file and also display on the terminal
 if [ "$LOG_LEVEL" == "none" ]; then
     if [ -z "$TEST_NAME" ]; then
-        RUST_BACKTRACE=$BACKTRACE cargo test --features $NETWORK -- --nocapture 2>&1 | tee $TEMP_FILE
+        script -q /dev/null -c "RUST_BACKTRACE=$BACKTRACE cargo test --features $FEATURES -- --nocapture" 2>&1 | tee $TEMP_FILE
     else
-        RUST_BACKTRACE=$BACKTRACE cargo test --features $NETWORK $TEST_NAME -- --nocapture 2>&1 | tee $TEMP_FILE
+        script -q /dev/null -c "RUST_BACKTRACE=$BACKTRACE cargo test --features $FEATURES $TEST_NAME -- --nocapture" 2>&1 | tee $TEMP_FILE
     fi
 else
     if [ -z "$TEST_NAME" ]; then
-        RUST_LOG=$LOG_LEVEL RUST_BACKTRACE=$BACKTRACE cargo test --features $NETWORK -- --nocapture 2>&1 | tee $TEMP_FILE
+        script -q /dev/null -c "RUST_LOG=$LOG_LEVEL RUST_BACKTRACE=$BACKTRACE cargo test --features $FEATURES -- --nocapture" 2>&1 | tee $TEMP_FILE
     else
-        RUST_LOG=$LOG_LEVEL RUST_BACKTRACE=$BACKTRACE cargo test --features $NETWORK $TEST_NAME -- --nocapture 2>&1 | tee $TEMP_FILE
+        script -q /dev/null -c "RUST_LOG=$LOG_LEVEL RUST_BACKTRACE=$BACKTRACE cargo test --features $FEATURES $TEST_NAME -- --nocapture" 2>&1 | tee $TEMP_FILE
     fi
 fi
-
 
 
 
@@ -129,12 +108,9 @@ if grep -q "Insufficient funds" $TEMP_FILE; then
     echo "It appears you have insufficient funds in your wallet."
     echo "Please acquire coins for address: $WALLET_ADDRESS"
     if [ "$NETWORK" == "signet" ]; then
-        echo "Visit the faucet at: https://alt.signetfaucet.com/ to get coins."
+        echo "Visit a faucet website to get coins."
     fi
 fi
 
 # Delete the temporary file
 rm $TEMP_FILE
-
-# Stop the Bitcoin daemon after tests
-bitcoin-cli stop

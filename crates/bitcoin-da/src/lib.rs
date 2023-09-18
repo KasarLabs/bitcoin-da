@@ -1,6 +1,5 @@
 use bitcoin::amount::Amount;
 use bitcoin::blockdata::script::Builder;
-// use bitcoin::blockdata::script::Instruction;
 use bitcoin::hash_types::Txid;
 use bitcoin::BlockHash;
 

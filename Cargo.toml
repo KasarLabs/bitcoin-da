@@ -2,14 +2,3 @@
 members = [
     "crates/bitcoin-da",
 ]
-
-[workspace.package]
-name = "bitcoin-da"
-repository = "https://github.com/KasarLabs/bitcoin-da"
-edition = "2021"
-
-[workspace.dependencies]
-bitcoin = "0.30.1"
-bitcoincore-rpc = "0.17.0"
-serde = { version = "1.0", default-features = false }
-
