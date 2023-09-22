@@ -46,37 +46,6 @@ while [ : ]; do
   esac
 done
 
-
-# Load the wallet
-bitcoin-cli loadwallet test 2>/dev/null
-
-# Function to get address by label
-get_address_by_label() {
-    local network=$1
-    LABEL_ADDRESS=$(bitcoin-cli -$network getaddressesbylabel "test" | jq -r 'keys[0]')
-    if [ -z "$LABEL_ADDRESS" ]; then
-        # Create a new address and label it
-        NEW_ADDRESS=$(bitcoin-cli -$network getnewaddress)
-        bitcoin-cli -$network setlabel "$NEW_ADDRESS" "test"
-        LABEL_ADDRESS=$NEW_ADDRESS
-    fi
-    echo $LABEL_ADDRESS
-}
-
-
-# Conditional block generation based on the network
-if [ "$NETWORK" == "regtest" ]; then
-    WALLET_ADDRESS=$(get_address_by_label "regtest")
-elif [ "$NETWORK" == "signet" ]; then
-    echo "Transactions must be confirmed on signet (this might take some time)."
-    WALLET_ADDRESS=$(get_address_by_label "signet")
-    # You can't force block generation on signet,
-    # Implementing a waiting mechanism here if required might be a good idea
-else
-    echo "Invalid network specified."
-    exit 1
-fi
-
 FEATURES="$NETWORK"
 
 if [ $LONG_TESTS -eq 1 ]; then
@@ -89,26 +58,15 @@ TEMP_FILE=$(mktemp)
 # Call the Rust test and redirect output to the temp file and also display on the terminal
 if [ "$LOG_LEVEL" == "none" ]; then
     if [ -z "$TEST_NAME" ]; then
-        script -q /dev/null -c "RUST_BACKTRACE=$BACKTRACE cargo test --features $FEATURES -- --nocapture" 2>&1 | tee $TEMP_FILE
+        RUST_BACKTRACE=$BACKTRACE cargo test --features $FEATURES -- --nocapture 2>&1 | tee $TEMP_FILE
     else
-        script -q /dev/null -c "RUST_BACKTRACE=$BACKTRACE cargo test --features $FEATURES $TEST_NAME -- --nocapture" 2>&1 | tee $TEMP_FILE
+        RUST_BACKTRACE=$BACKTRACE cargo test --features $FEATURES $TEST_NAME -- --nocapture 2>&1 | tee $TEMP_FILE
     fi
 else
     if [ -z "$TEST_NAME" ]; then
-        script -q /dev/null -c "RUST_LOG=$LOG_LEVEL RUST_BACKTRACE=$BACKTRACE cargo test --features $FEATURES -- --nocapture" 2>&1 | tee $TEMP_FILE
+        RUST_LOG=$LOG_LEVEL RUST_BACKTRACE=$BACKTRACE cargo test --features $FEATURES -- --nocapture 2>&1 | tee $TEMP_FILE
     else
-        script -q /dev/null -c "RUST_LOG=$LOG_LEVEL RUST_BACKTRACE=$BACKTRACE cargo test --features $FEATURES $TEST_NAME -- --nocapture" 2>&1 | tee $TEMP_FILE
-    fi
-fi
-
-
-
-# Check if the test failed
-if grep -q "Insufficient funds" $TEMP_FILE; then
-    echo "It appears you have insufficient funds in your wallet."
-    echo "Please acquire coins for address: $WALLET_ADDRESS"
-    if [ "$NETWORK" == "signet" ]; then
-        echo "Visit a faucet website to get coins."
+        RUST_LOG=$LOG_LEVEL RUST_BACKTRACE=$BACKTRACE cargo test --features $FEATURES $TEST_NAME -- --nocapture 2>&1 | tee $TEMP_FILE
     fi
 fi
 
