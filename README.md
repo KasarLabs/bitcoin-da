@@ -112,6 +112,8 @@ This repo comes with an automation script (`run_tests.sh`) which simplifies the 
 - `--signet`: Use the signet network.
 - `--regtest`: Use the regtest network.
 
+Note: there should be no quotations on any of the argument flags when used.
+
 ### Examples:
 
 Run all tests with `debug` logs and backtrace:
@@ -151,8 +153,11 @@ If you prefer manual testing:
 
   - **Logs + Backtrace**:
     ```shell
-    RUST_LOG=debug RUST_BACKTRACE=1 cargo test --features regtest -- --nocapture
+    RUST_LOG=debug RUST_BACKTRACE=1 cargo test --features regtest
     ```
+
+  - **Logs + Backtrace + long tests**:
+    RUST_LOG=debug RUST_BACKTRACE=1 cargo test --features regtest,long_tests
 
 ## License
 
