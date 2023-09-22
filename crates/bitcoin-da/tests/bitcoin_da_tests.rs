@@ -25,6 +25,21 @@ mod tests {
 
     use bitcoin_da::*;
 
+    #[cfg(all(feature = "regtest", not(feature = "signet")))]
+    const NODE_IP: &str = "localhost:8332";
+    
+    #[cfg(all(feature = "signet", not(feature = "regtest")))]
+    const NODE_IP: &str = "127.0.0.1:38332";
+    
+    #[cfg(all(feature = "regtest", feature = "signet"))]
+    compile_error!("Both regnet and signet features are active. Only one should be active at a time.");
+
+    // If neither feature is active, default to regnet.
+    #[cfg(not(any(feature = "regtest", feature = "signet")))]
+    const NODE_IP: &str = "localhost:8332";
+    
+
+
     #[test]
     fn test_chunk_slice() {
         let data = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
@@ -44,6 +59,7 @@ mod tests {
 
         assert_eq!(chunks.len(), 0); // Expect 0 chunks for empty data
     }
+
 
     #[test]
     fn test_extract_push_data() {
@@ -166,6 +182,7 @@ mod tests {
         assert_eq!(res2, Some(b"barkHello, world!barkHello, world!".to_vec()));
     }
 
+
     #[test]
     fn test_create_taproot_address() {
         let embedded_data = b"Hello, world!";
@@ -208,17 +225,28 @@ mod tests {
         }
     }
 
+
     #[test]
     fn test_commit_tx() {
+        
         let relayer = Relayer::new(&Config::new(
-            // "YOUR_NODE_IP:38332".to_owned(), // SIGNET
-            "localhost:8332".to_owned(), // REGNET
+            NODE_IP.to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
         ))
         .unwrap();
         let embedded_data = b"Hello, world!";
-        let network = Network::Regtest;
+
+        let network = if cfg!(feature = "regtest") {
+            Network::Regtest
+        } else if cfg!(feature = "signet") {
+            Network::Signet
+        } else {
+            // Handle the case where neither feature is enabled, if necessary
+            panic!("Neither regtest nor signet feature is enabled!");
+        };
+        
+        // let network = Network::Regtest;
         // let network = Network::Signet;
 
         let test_addr: Address = create_taproot_address(embedded_data, network).unwrap();
@@ -231,13 +259,13 @@ mod tests {
         }
     }
 
+
     #[test]
     fn test_reveal() {
         // Create data and relayer
         let embedded_data = b"Hello, world!";
         let relayer = Relayer::new(&Config::new(
-            // "YOUR_NODE_IP:38332".to_owned(), // SIGNET
-            "localhost:8332".to_owned(), // REGNET
+            NODE_IP.to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
         ))
@@ -248,8 +276,11 @@ mod tests {
         let network = Network::from_core_arg(network_name)
             .map_err(|_| BitcoinError::InvalidNetwork)
             .unwrap();
+        #[cfg(feature = "regtest")]
         assert_eq!(network, Network::Regtest);
-        // assert_eq!(network, Network::Signet);
+        
+        #[cfg(feature = "signet")]
+        assert_eq!(network, Network::Signet);        
 
         // append id to data
         let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
@@ -323,28 +354,49 @@ mod tests {
         }
     }
 
+
     #[test]
     fn test_reveal2() {
+        // ======================================
+        // Given: a configured Bitcoin relayer on the REGNET network with embedded data
+        // ======================================
+    
+        // Set up embedded data and relayer configuration
         let embedded_data = b"Hello, world!";
         let relayer = Relayer::new(&Config::new(
-            // "YOUR_NODE_IP:38332".to_owned(), // SIGNET
-            "localhost:8332".to_owned(), // REGNET
+            NODE_IP.to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
         ))
         .unwrap();
+
         // get network, should be regtest
         let blockchain_info = relayer.client.get_blockchain_info().unwrap();
         let network_name = &blockchain_info.chain;
         let network = Network::from_core_arg(network_name)
             .map_err(|_| BitcoinError::InvalidNetwork)
             .unwrap();
+        
+        #[cfg(feature = "regtest")]
         assert_eq!(network, Network::Regtest);
+        
+        #[cfg(feature = "signet")]
+        assert_eq!(network, Network::Signet); 
+
         // append id to data
         let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
         data_with_id.extend_from_slice(embedded_data);
         // create address with data in script
         let address = create_taproot_address(&data_with_id, network).unwrap();
+
+        // ================================================
+        // When: a commit transaction is made, followed by a reveal transaction
+        // ================================================
+
+        // ===============================================
+        // Then: assert the success of the reveal operation after a successful commit
+        // ===============================================
+
         // do first transaction -> commit
         match relayer.commit_tx(&address) {
             Ok(txid) => match relayer.reveal_tx(&data_with_id, &txid) {
@@ -357,27 +409,47 @@ mod tests {
             Err(e) => panic!("Commit failed with error: {:?}", e),
         }
     }
+    
 
     #[test]
     fn test_write() {
+        // ===============================
+        // Given: a configured Bitcoin relayer on the REGNET network
+        // ===============================
+
+        // Set up embedded data and relayer configuration
         let embedded_data = b"Hello, world!";
         let relayer = Relayer::new(&Config::new(
-            // "YOUR_NODE_IP:38332".to_owned(), // SIGNET
-            "localhost:8332".to_owned(), // REGNET
+            NODE_IP.to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
         ))
         .unwrap();
+
         // get network, should be regtest
         let blockchain_info = relayer.client.get_blockchain_info().unwrap();
         let network_name = &blockchain_info.chain;
-        let network = Network::from_core_arg(network_name)
+        let _network = Network::from_core_arg(network_name)
             .map_err(|_| BitcoinError::InvalidNetwork)
             .unwrap();
-        // assert_eq!(network, Network::Regtest);
-        assert_eq!(network, Network::Signet);
 
-        match relayer.write(embedded_data) {
+        #[cfg(feature = "signet")]
+        assert_eq!(_network, Network::Signet);
+
+        #[cfg(feature = "regtest")]
+        assert_eq!(_network, Network::Regtest);
+
+        // ==================================
+        // When: data is written to the network
+        // ==================================
+
+        let write_result = relayer.write(embedded_data);
+
+        // ==========================================
+        // Then: assert successful writing operation
+        // ==========================================
+
+        match write_result {
             Ok(txid) => {
                 println!("Txid: {}", txid);
                 println!("Successful write");
@@ -386,11 +458,170 @@ mod tests {
         }
     }
 
+    fn wait_for_new_block(relayer: &Relayer, current_height: u64, timeout: std::time::Duration, poll_interval: std::time::Duration) {
+        let start_time = std::time::Instant::now();
+        loop {
+            if start_time.elapsed() > timeout {
+                panic!("Timeout waiting for transaction to be included in a block");
+            }
+    
+            let new_blockchain_info = relayer.client.get_blockchain_info().unwrap();
+            if new_blockchain_info.blocks > current_height {
+                // A new block has been mined, break out of the loop
+                break;
+            }
+    
+            // Sleep for the poll interval before checking again
+            println!("Waiting for new block");
+            std::thread::sleep(poll_interval);
+        }
+    }
+
+    #[cfg(feature = "long_tests")]
+    #[test]
+    fn test_read_data_by_block_height() {
+        // ===============================
+        // Given: a block with embedded data
+        // ===============================
+    
+        // Prepare the data and relayer configuration
+        let embedded_data = b"Hello, world!";
+        let relayer = Relayer::new(&Config::new(
+            NODE_IP.to_owned(),
+            "rpcuser".to_owned(),
+            "rpcpass".to_owned(),
+        ))
+        .unwrap();
+    
+        // Obtain the current block height before embedding
+        let blockchain_info = relayer.client.get_blockchain_info().unwrap();
+        let current_height = blockchain_info.blocks;
+    
+        // Embed the data into the blockchain by writing a transaction
+        match relayer.write(embedded_data) {
+            Ok(txid) => {
+                println!("Txid: {}", txid);
+                println!("Successful write");
+            }
+            Err(e) => panic!("Write failed with error: {:?}", e),
+        }
+    
+        // Add the transaction to a new block
+        relayer.generate_blocks(1).unwrap();
+    
+        if cfg!(feature = "regtest") {
+            // relayer | current height | timeout (seconds) | polling frequency (seconds)
+            wait_for_new_block(&relayer, current_height, std::time::Duration::from_secs(20), std::time::Duration::from_secs(1));
+        } else if cfg!(feature = "signet") {
+            // relayer | current height | timeout (seconds) | polling frequency (seconds)
+            wait_for_new_block(&relayer, current_height, std::time::Duration::from_secs(1200), std::time::Duration::from_secs(60));
+        }
+    
+        // ================================
+        // When: read data by block height
+        // ================================
+    
+        let read_result = relayer.read_height(current_height + 1);
+    
+        // ==========================================
+        // Then: assert outcomes and expected results
+        // ==========================================
+    
+        // Assert the data was correctly embedded and can be read back
+        match read_result {
+            Ok(data) => {
+                // Check for the presence of the unique data in the block
+                assert!(
+                    data.windows(embedded_data.len()).any(|window| window == embedded_data.as_slice()),
+                    "Unique data not found in block. Received data: {:?}",
+                    data
+                );
+                println!("Successful read");
+            }
+            Err(e) => panic!("Read failed with error: {:?}", e),
+        }
+    }
+    
+    fn wait_for_tx_in_mempool(relayer: &Relayer, txid: &Txid, timeout: std::time::Duration, poll_interval: std::time::Duration) -> Option<bitcoincore_rpc::jsonrpc::serde_json::Value> {
+        let start_time = std::time::Instant::now();
+        loop {
+            if start_time.elapsed() > timeout {
+                panic!("Timeout waiting for transaction to appear in the mempool");
+            }
+    
+            // Check if the transaction is in the mempool
+            match relayer.client.call::<bitcoincore_rpc::jsonrpc::serde_json::Value>("getmempoolentry", &[bitcoincore_rpc::jsonrpc::serde_json::Value::String(txid.to_string())]) {
+                Ok(mempool_entry) => {
+                    println!("Mempool Entry: {:?}", mempool_entry);
+                    return Some(mempool_entry);
+                },
+                Err(_) => {
+                    // Sleep for the poll interval before checking again
+                    println!("Waiting for transaction to appear in mempool");
+                    std::thread::sleep(poll_interval);
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "long_tests")]
+    #[test]
+    fn test_read_transaction_from_mempool() {
+        // ===============================
+        // Given: a configured relayer and embedded data to be written
+        // ===============================
+        
+        env_logger::init();
+        let embedded_data = b"Hello, world!";
+        
+        // Prepare the relayer configuration
+        let relayer = Relayer::new(&Config::new(
+            NODE_IP.to_owned(),
+            "rpcuser".to_owned(),
+            "rpcpass".to_owned(),
+        ))
+        .expect("Failed to create relayer");
+    
+        // Write the embedded data to the blockchain
+        let txid = relayer.write(embedded_data).expect("Write failed");
+        println!("Txid: {}", txid);
+        println!("Successful write");
+    
+        let mut mempool_entry: Option<bitcoincore_rpc::jsonrpc::serde_json::Value> = None;
+
+        // Wait or poll for the transaction to appear in the mempool
+        if cfg!(feature = "regtest") {
+            // relayer | transaction | timeout (seconds) | polling frequency (seconds)
+            mempool_entry = wait_for_tx_in_mempool(&relayer, &txid, std::time::Duration::from_secs(20), std::time::Duration::from_secs(1));
+        }
+        else if cfg!(feature = "signet") {
+            // relayer | transaction | timeout (seconds) | polling frequency (seconds)
+            mempool_entry = wait_for_tx_in_mempool(&relayer, &txid, std::time::Duration::from_secs(1200), std::time::Duration::from_secs(60));
+        }
+
+        // ===============================
+        // When: checking the mempool for the transaction
+        // ===============================
+        let data = relayer.read_transaction(&txid, None)
+                .expect("Failed to read transaction");
+
+    
+        // ==========================================
+        // Then: assert outcomes and expected results
+        // ==========================================
+        if let Some(entry) = &mempool_entry {
+            let unbroadcast = entry.get("unbroadcast").and_then(|v| v.as_bool());
+            assert_eq!(unbroadcast, Some(true));
+        }
+    
+        assert_eq!(data, embedded_data.to_vec());
+    }
+    
+
     #[test]
     fn test_read_height() {
         let relayer = Relayer::new(&Config::new(
-            // "YOUR_NODE_IP:38332".to_owned(), // SIGNET
-            "localhost:8332".to_owned(), // REGNET
+            NODE_IP.to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
         ))
@@ -400,17 +631,21 @@ mod tests {
             Ok(data) => {
                 // Change this line to whatever data you want.
                 // "bark" is appended to the beginning of the data
-                assert_eq!(data, b"barkHello, world!".to_vec());
+                assert!(
+                    data == b"barkHello, world!".to_vec(),
+                    "Assertion failed. This test is designed to be run manually. Expect it to fail in auto mode. Received data: {:?}",
+                    data
+                );
                 println!("Successful read");
             }
-            Err(e) => panic!("Read failed with error: {:?}", e),
+            Err(e) => panic!("This test is designed to be manually handled. Expect it to fail in auto mode. Read failed with error: {:?}", e),
         }
     }
 
     #[test]
     fn test_read_transaction() {
         let relayer = Relayer::new(&Config::new(
-            "localhost:8332".to_owned(),
+            NODE_IP.to_owned(),
             "rpcuser".to_owned(),
             "rpcpass".to_owned(),
         ))
@@ -424,9 +659,16 @@ mod tests {
 
         match relayer.read_transaction(&txid, Some(&block)) {
             Ok(data) => {
-                assert_eq!(data, b"barkbarkHello, world!".to_vec());
+                assert!(
+                    data == b"barkbarkHello, world!".to_vec(),
+                    "Assertion failed. This test is designed to be run manually. Expect it to fail in auto mode. Expected 'barkbarkHello, world!', but received: {:?}",
+                    data
+                );
+                
             }
-            Err(e) => panic!("Read_transaction failed with error: {:?}", e),
+            Err(e) => panic!("This test is designed to be manually handled. Expect it to fail in auto mode. Read_transaction failed with error: {:?}", e),
         }
     }
+
+    
 }

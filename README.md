@@ -18,52 +18,48 @@
 
 # 🧙‍♂️ Bitcoin-da-rs
 
-This crate allows to use bitcoin as a data availability layer.
+This crate allows Bitcoin to function as a data availability layer, supporting both `write` and `read` operations. It's been developed with Rust sequencers in mind, particularly for integration with [Madara](https://github.com/keep-starknet-strange/madara). It's modeled after rollkit's [bitcoin-da](https://github.com/rollkit/bitcoin-da).
 
-It offers both `write` and `read` functions. This can be incorporated into any sequencer written in Rust and has been specifically designed for [Madara](https://github.com/keep-starknet-strange/madara).
-
-This repo is rust adaptation of rollkit's [bitcoin-da](https://github.com/rollkit/bitcoin-da).
-
-The code isn't production ready. It is highly experimental.
+⚠️ **Disclaimer**: The code is currently in its experimental phase and is not recommended for production use.
 
 ## Prerequisites
 
-- Install `bitcoind` & `bitcoin-cli`
+Before you can proceed with using or testing this crate, there are a few setup steps you need to follow:
 
-- Launch a Bitcoin daemon
+- **Installation**: Ensure `bitcoind` & `bitcoin-cli` are installed.
 
-To launch a bitcoin daemon, run the following command:
+- **Setting up a Bitcoin Daemon**:
+
+  - Start a bitcoin daemon with:
+    ```shell
+    bitcoind -conf=path_to/bitcoin.conf
+    ```
+
+  - If you're setting up for the first time and don't have a wallet yet:
+    ```shell
+    bitcoin-cli createwallet test
+    ```
+
+  - Mine some blocks (especially useful for regtest):
+    ```shell
+    bitcoin-cli -regtest -generate 150
+    ```
+
+**Note**: These steps are for both manual and automatic testing. For both cases you will still need to start `bitcoind` separately. Additionally, automated tests will only handle some `bitcoin-cli` operations such as `loadwallet` and setting the `test` label for the wallet in use.
+
+## Building the Library
 
 ```shell
-bitcoind -conf=path_to/bitcoin.conf
-```
-
-If you don't already have a wallet, create one by doing:
-
-```shell
-bitcoin-cli createwallet test
-```
-
-Then mine some blocks:
-
-```shell
-bitcoin-cli -regtest -generate 150
-```
-
-## Building
-
-The library can be built and tested using [`cargo`](https://github.com/rust-lang/cargo/):
-
-```
-git clone git@github.com:KasarLabs/da.git
+git clone git@github.com:KasarLabs/bitcoin-da.git
 cd da
 cargo build
 ```
 
-Please refer to the [cargo documentation](https://doc.rust-lang.org/stable/cargo/) for more
-detailed instructions.
+For more detailed instructions on building Rust projects, refer to the [cargo documentation](https://doc.rust-lang.org/stable/cargo/).
 
-## Example
+## Example Usage
+
+Here's a simple example to demonstrate how to use the library:
 
 ```rs
 fn test_write() {
@@ -90,27 +86,86 @@ fn test_write() {
     }
 ```
 
-## Tests
+## Automated Testing with the Provided Script
 
-You can run tests with:
+This repo comes with an automation script (`run_tests.sh`) which simplifies the testing process by handling node operations and test configurations. The script assumes a bitcoin node is already running.
 
+### Preparations:
+
+- Grant the script execute permissions:
+  ```bash
+  chmod +x run_tests.sh
+  ```
+
+1. **Setup**: Ensure a Bitcoin node is running on the desired network (`regtest` or `signet`), and modify the RPC URL in your configuration as necessary. Depending on the test, you might also need to comment/uncomment the required network in the test function.
+
+2. **Command Usage**:
+
+```bash
+./run_tests.sh -l [log level] -b [backtrace] -t [test name] -L --signet|--regtest
 ```
-cargo test
+
+- `-l` or `--log-level`: Specify the log level. Valid options are `info`, `debug`, or `none`.
+- `-b` or `--backtrace`: Enable (1) or Disable (0) backtrace.
+- `-t` or `--test-name`: Specify a test name (optional).
+- `-L` or `--long-tests`: Include tests that take a long time to complete in signet due to the time it takes to complete a block. These tests run fast in regtest.
+- `--signet`: Use the signet network.
+- `--regtest`: Use the regtest network.
+
+Note: there should be no quotations on any of the argument flags when used.
+
+### Examples:
+
+Run all tests with `debug` logs and backtrace:
+
+```bash
+./run_tests.sh -l debug -b 1
 ```
 
-Before running the test, you must have a bitcoin node running either on regtest or signet.
-Then you need to change the rpc url accordingly.
-You also need to comment/uncomment the required network in each test function.
+Run the `test_example` with `info` logs:
+
+```bash
+./run_tests.sh -l info -t test_example
+```
+
+## Manual Tests
+
+If you prefer manual testing:
+
+1. **Setup**: Ensure a Bitcoin node is running on the desired network (`regtest` or `signet`), and modify the RPC URL in your configuration as necessary. Depending on the test, you might also need to comment/uncomment the required network in the test function.
+
+2. **Running Tests**:
+
+  - **regtest**:
+    ```shell
+    cargo test --features regtest
+    ```
+
+  - **Signet**:
+    ```shell
+    cargo test --features signet
+    ```
+
+  - **With Logs**:
+    ```shell
+    RUST_LOG=debug cargo test
+    ```
+
+  - **Logs + Backtrace**:
+    ```shell
+    RUST_LOG=debug RUST_BACKTRACE=1 cargo test --features regtest
+    ```
+
+  - **Logs + Backtrace + long tests**:
+    RUST_LOG=debug RUST_BACKTRACE=1 cargo test --features regtest,long_tests
 
 ## License
 
-This project is licensed under the Apache 2.0 license.
-
-See [LICENSE](./LICENSE) for more information.
+This project is under the Apache 2.0 license. Detailed information can be found in [LICENSE](./LICENSE).
 
 ## Contributors ✨
 
-This project is a collaboration between [Kasar](https://twitter.com/kasarlabs) and [Taproot Wizards](https://twitter.com/TaprootWizards) 🧙‍♂️
+Collaborative work by [Kasar](https://twitter.com/kasarlabs) and [Taproot Wizards](https://twitter.com/TaprootWizards) 🧙‍♂️.
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
