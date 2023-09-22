@@ -423,8 +423,7 @@ impl Relayer {
     
         // Iterate over transaction inputs
         for input in tx.input.iter() {
-            log::info!("Inspecting input with witness: {:?}", input.witness);
-    
+
             // Try to get the second to last witness data
             if let Some(wit_data) = input.witness.second_to_last() {
                 // Extract data from the witness
@@ -434,14 +433,12 @@ impl Relayer {
                         // Remove the "bark" identifier
                         extracted_data.drain(0..4);
                     }
-                    
-                    log::info!("Data extracted from transaction: {:?}", extracted_data);
                     data.append(&mut extracted_data);
                 }
             }
         }
     
-        log::info!("Final data from read_transaction: {:?}", data);
+        log::info!("Data retrieved from DA Layer: {:?}", data);
         Ok(data)
     }   
 
@@ -485,7 +482,7 @@ impl Relayer {
                 }
             }
         }
-
+        log::info!("Data retrieved from DA Layer: {:?}", data);
         Ok(data)
     }
     
@@ -511,13 +508,9 @@ impl Relayer {
             .get_blockchain_info()
             .map_err(|_| BitcoinError::GetBlockchainInfoErr)?;
     
-        log::info!("Blockchain info: {:?}", blockchain_info);
-    
         // Convert network name to Network type
         let network = Network::from_core_arg(&blockchain_info.chain)
             .map_err(|_| BitcoinError::InvalidNetwork)?;
-    
-        log::info!("Network: {:?}", network);
     
         // Create data payload with protocol ID and actual data
         let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
@@ -614,14 +607,12 @@ pub fn extract_push_data(pk_script: Vec<u8>) -> Option<Vec<u8>> {
                 }
 
                 if !data_collector.is_empty() {
-                    log::info!("Data found in extract_push_data: {:?}", data_collector);
                     return Some(data_collector);
                 }
             }
         }
     } else {
         log::error!("extract_push_data: failed to get tap tree from pk_script: {:?}", pk_script);
-        panic!("extract_push_data: failed to get tap tree");
     }
     None
 }

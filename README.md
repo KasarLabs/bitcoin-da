@@ -50,7 +50,7 @@ Before you can proceed with using or testing this crate, there are a few setup s
 ## Building the Library
 
 ```shell
-git clone git@github.com:KasarLabs/da.git
+git clone git@github.com:KasarLabs/bitcoin-da.git
 cd da
 cargo build
 ```

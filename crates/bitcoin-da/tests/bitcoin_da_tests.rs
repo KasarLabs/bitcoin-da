@@ -2,7 +2,6 @@
 mod tests {
 
     use std::str::FromStr;
-    use uuid::Uuid;
 
     use bitcoin::address::AddressType;
     use bitcoin::hash_types::Txid;
@@ -486,8 +485,7 @@ mod tests {
         // ===============================
     
         // Prepare the data and relayer configuration
-        let unique_id = Uuid::new_v4().to_string();
-        let embedded_data = format!("Hello, height!{}", unique_id).into_bytes();
+        let embedded_data = b"Hello, world!";
         let relayer = Relayer::new(&Config::new(
             NODE_IP.to_owned(),
             "rpcuser".to_owned(),
