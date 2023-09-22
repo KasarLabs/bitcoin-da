@@ -7,45 +7,45 @@ LONG_TESTS=0
 BACKTRACE=0
 
 # Parse command-line arguments
-while getopts "l:b:t:L" opt; do
-  case $opt in
-    l)
-    if [ "$OPTARG" == "debug" ] || [ "$OPTARG" == "info" ] || [ "$OPTARG" == "none" ]; then
-        LOG_LEVEL=$OPTARG
-    else
-        echo "Invalid log level option. Use 'info', 'debug', or 'none'."
-        exit 1
-    fi
-    ;;
-    b)
-      BACKTRACE=$OPTARG
-      ;;
-    t)
-      TEST_NAME="$OPTARG"
-      ;;
-    L)
-      LONG_TESTS=1
-      ;;
-    \?)
-      echo "Invalid option: -$OPTARG" >&2
-      exit 1
-      ;;
-    :)
-      echo "Option -$OPTARG requires an argument." >&2
-      exit 1
-      ;;
+VALID_ARGS=$(getopt -o l:b:t:L --long log-level:,backtrace:,test-name:,long-tests,signet,regtest,conf: -- "$@")
+if [[ $? -ne 0 ]]; then
+    echo "Invalid arguments."
+    exit 1;
+fi
+
+eval set -- "$VALID_ARGS"
+while [ : ]; do
+  case "$1" in
+    -l | --log-level)
+        LOG_LEVEL="$2"
+        shift 2
+        ;;
+    -b | --backtrace)
+        BACKTRACE="$2"
+        shift 2
+        ;;
+    -t | --test-name)
+        TEST_NAME="$2"
+        shift 2
+        ;;
+    -L | --long-tests)
+        LONG_TESTS=1
+        shift
+        ;;
+    --signet)
+        NETWORK="signet"
+        shift
+        ;;
+    --regtest)
+        NETWORK="regtest"
+        shift
+        ;;
+    --) shift; 
+        break 
+        ;;
   esac
 done
 
-# Derive the NETWORK value from ~/.bitcoin/bitcoin.conf
-if grep -q '^regtest=1' ~/.bitcoin/bitcoin.conf; then
-    NETWORK="regtest"
-elif grep -q '^signet=1' ~/.bitcoin/bitcoin.conf; then
-    NETWORK="signet"
-else
-    echo "No valid network configuration found in bitcoin.conf."
-    exit 1
-fi
 
 # Load the wallet
 bitcoin-cli loadwallet test 2>/dev/null

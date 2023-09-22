@@ -102,13 +102,15 @@ This repo comes with an automation script (`run_tests.sh`) which simplifies the 
 2. **Command Usage**:
 
 ```bash
-./run_tests.sh -l [log level] -b [backtrace] -t [test name] -L
+./run_tests.sh -l [log level] -b [backtrace] -t [test name] -L --signet|--regtest
 ```
 
-- `-l` Log level (`info`, `debug`, or `none`).
-- `-b` Enable(1)/Disable(0) backtrace.
-- `-t` Specify a test name (optional).
-- `-L` Include tests that take a long time to complete in signet due to time it takes to complete a block. These tests run fast in regtest.
+- `-l` or `--log-level`: Specify the log level. Valid options are `info`, `debug`, or `none`.
+- `-b` or `--backtrace`: Enable (1) or Disable (0) backtrace.
+- `-t` or `--test-name`: Specify a test name (optional).
+- `-L` or `--long-tests`: Include tests that take a long time to complete in signet due to the time it takes to complete a block. These tests run fast in regtest.
+- `--signet`: Use the signet network.
+- `--regtest`: Use the regtest network.
 
 ### Examples:
 

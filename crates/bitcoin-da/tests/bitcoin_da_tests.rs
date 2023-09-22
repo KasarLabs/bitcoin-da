@@ -498,7 +498,7 @@ mod tests {
         let current_height = blockchain_info.blocks;
     
         // Embed the data into the blockchain by writing a transaction
-        match relayer.write(&embedded_data) {
+        match relayer.write(embedded_data) {
             Ok(txid) => {
                 println!("Txid: {}", txid);
                 println!("Successful write");
