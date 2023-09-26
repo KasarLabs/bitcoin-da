@@ -30,8 +30,6 @@ use bitcoincore_rpc::RpcApi;
 // Standard imports
 use core::fmt;
 
-
-
 pub const PROTOCOL_ID: [u8; 4] = [0x62, 0x61, 0x72, 0x6b]; // 'bark' in ASCII
 
 // Internal key pair is used for tweaking
@@ -52,7 +50,7 @@ pub enum BitcoinError {
     ReadNoDataErr,
     GetBlockErr,
     GetBlockchainInfoErr,
-    RpcError(bitcoincore_rpc::Error),  // New variant
+    RpcError(bitcoincore_rpc::Error), // New variant
 }
 
 impl fmt::Display for BitcoinError {
@@ -71,7 +69,7 @@ impl fmt::Display for BitcoinError {
             BitcoinError::ReadNoDataErr => write!(f, "Read no data in tx error"),
             BitcoinError::GetBlockErr => write!(f, "Get block error"),
             BitcoinError::GetBlockchainInfoErr => write!(f, "Get blockchain info error"),
-            BitcoinError::RpcError(ref e) => write!(f, "RPC error: {}", e),  // New match arm
+            BitcoinError::RpcError(ref e) => write!(f, "RPC error: {}", e), // New match arm
         }
     }
 }
@@ -82,7 +80,6 @@ impl From<bitcoincore_rpc::Error> for BitcoinError {
         BitcoinError::RpcError(error)
     }
 }
-
 
 /// Splits a slice of data into multiple chunks of a given size.
 /// # Arguments
@@ -220,7 +217,7 @@ pub fn find_commit_idx_output_from_txid(
     // Search for the desired UTXO in the transaction outputs
     for (i, out) in raw_commit.output.iter().enumerate() {
         // Identify the output with the value 10,000 (assuming this is the fee amount)
-        if out.value == 10000 {
+        if out.value == 16000 {
             return Ok((i, out.clone()));
         }
     }
@@ -228,7 +225,6 @@ pub fn find_commit_idx_output_from_txid(
     // If no matching output is found, return an error
     Err(BitcoinError::TransactionErr)
 }
-
 
 // Relayer is a bitcoin client wrapper which provides reader and writer methods
 // to write binary blobs to the blockchain.
@@ -251,13 +247,15 @@ impl Relayer {
     pub fn generate_blocks(&self, number_of_blocks: u32) -> Result<(), BitcoinError> {
         // Get a new address for the mining reward
         let address: String = self.client.call("getnewaddress", &[])?;
-    
+
         // Mine the blocks
-        let _blocks: Vec<String> = self.client.call("generatetoaddress", &[number_of_blocks.into(), address.into()])?;
-    
+        let _blocks: Vec<String> = self.client.call(
+            "generatetoaddress",
+            &[number_of_blocks.into(), address.into()],
+        )?;
+
         Ok(())
     }
-    
 
     // close shuts down the client.
     pub fn close(&self) {
@@ -288,7 +286,7 @@ impl Relayer {
         match addr.address_type() {
             Some(AddressType::P2tr) => {
                 // fee to cover the cost
-                let amount = Amount::from_btc(0.0001).map_err(|_| BitcoinError::BadAmount)?;
+                let amount = Amount::from_btc(0.00016).map_err(|_| BitcoinError::BadAmount)?;
                 let hash: Txid = self
                     .client
                     .send_to_address(
@@ -369,9 +367,9 @@ impl Relayer {
         let p2tr_script = pay_to_taproot_script(&output_key.to_inner()).unwrap();
         assert_eq!(p2tr_script, commit_output.script_pubkey);
 
-        // Define the transaction's output
+        // Define the transaction's output = this is what is left after the fees
         let tx_out = TxOut {
-            value: 1000, // in satoshi
+            value: 500, // in satoshi
             script_pubkey: p2tr_script,
         };
         tx.output.push(tx_out);
@@ -418,12 +416,11 @@ impl Relayer {
             .client
             .get_raw_transaction(hash, block_hash)
             .map_err(|_| BitcoinError::InvalidTxHash)?;
-    
+
         let mut data = Vec::new();
-    
+
         // Iterate over transaction inputs
         for input in tx.input.iter() {
-
             // Try to get the second to last witness data
             if let Some(wit_data) = input.witness.second_to_last() {
                 // Extract data from the witness
@@ -437,12 +434,10 @@ impl Relayer {
                 }
             }
         }
-    
+
         log::info!("Data retrieved from DA Layer: {:?}", data);
         Ok(data)
-    }   
-
-    
+    }
 
     /// Reads and extracts data from transaction witnesses within a block at a given height.
     ///
@@ -485,9 +480,6 @@ impl Relayer {
         log::info!("Data retrieved from DA Layer: {:?}", data);
         Ok(data)
     }
-    
-    
-    
 
     /// Writes provided data into Bitcoin via a taproot address.
     ///
@@ -501,42 +493,40 @@ impl Relayer {
     /// a `BitcoinError` if something went wrong.
     pub fn write(&self, data: &[u8]) -> Result<Txid, BitcoinError> {
         log::info!("Initial data received in write function: {:?}", data);
-    
+
         // Retrieve blockchain information
         let blockchain_info = self
             .client
             .get_blockchain_info()
             .map_err(|_| BitcoinError::GetBlockchainInfoErr)?;
-    
+
         // Convert network name to Network type
         let network = Network::from_core_arg(&blockchain_info.chain)
             .map_err(|_| BitcoinError::InvalidNetwork)?;
-    
+
         // Create data payload with protocol ID and actual data
         let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
         data_with_id.extend_from_slice(data);
-    
+
         log::info!("Data with protocol ID: {:?}", data_with_id);
-    
+
         // Create a taproot address with the data included in the script
         let address = create_taproot_address(&data_with_id, network)?;
-    
+
         log::info!("Taproot address: {:?}", address);
-    
+
         // Commit a transaction to create the UTXO with the associated fees
         let commit_hash = self.commit_tx(&address)?;
-    
+
         log::info!("Commit transaction hash: {:?}", commit_hash);
-    
+
         // Spend the UTXO, revealing the script and, consequently, the data
         let reveal_hash = self.reveal_tx(&data_with_id, &commit_hash)?;
-    
+
         log::info!("Reveal transaction hash: {:?}", reveal_hash);
-    
+
         Ok(reveal_hash)
     }
-    
-    
 }
 
 pub struct Config {
@@ -566,8 +556,10 @@ impl Config {
 /// An `Option` containing the extracted data as a `Vec<u8>` if the required pattern was found,
 /// otherwise `None`.
 pub fn extract_push_data(pk_script: Vec<u8>) -> Option<Vec<u8>> {
-    let node_info =
-        NodeInfo::new_leaf_with_ver(ScriptBuf::from_bytes(pk_script.clone()), LeafVersion::TapScript);
+    let node_info = NodeInfo::new_leaf_with_ver(
+        ScriptBuf::from_bytes(pk_script.clone()),
+        LeafVersion::TapScript,
+    );
 
     let tap_tree_result = TapTree::try_from(node_info);
 
@@ -612,8 +604,10 @@ pub fn extract_push_data(pk_script: Vec<u8>) -> Option<Vec<u8>> {
             }
         }
     } else {
-        log::error!("extract_push_data: failed to get tap tree from pk_script: {:?}", pk_script);
+        log::error!(
+            "extract_push_data: failed to get tap tree from pk_script: {:?}",
+            pk_script
+        );
     }
     None
 }
-
