@@ -2,14 +2,23 @@
 name = "bitcoin-da"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/KasarLabs/bitcoin-da"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
-bitcoin = { workspace = true }
-bitcoincore-rpc = { workspace = true }
-serde = { workspace = true }
+bitcoin = "0.30.1" # Replace with the version you want or use workspace=true if 'bitcoin' is another package in your workspace
+bitcoincore-rpc = "0.17.0" # Same note as above
+serde = "1.0" # Same note as above
 hex = "0.4.2"
 bitcoin_hashes = "0.12.0"
 dotenv = "0.15.0"
+log = "0.4"
+env_logger = "0.9"
+ethers = "2.0.10"
+
+[features]
+regtest = []
+signet = []
+long_tests = []

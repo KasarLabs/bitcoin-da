@@ -9,20 +9,23 @@ use bitcoin::opcodes;
 use bitcoin::script as txscript;
 use bitcoin::script::Instruction;
 use bitcoin::script::PushBytesBuf;
-use bitcoin::secp256k1::KeyPair;
 use bitcoin::secp256k1::XOnlyPublicKey;
 use bitcoin::secp256k1::{All, Secp256k1};
 use bitcoin::taproot::LeafVersion;
 use bitcoin::taproot::NodeInfo;
 use bitcoin::taproot::TapTree;
 use bitcoin::taproot::TaprootBuilder;
+use bitcoin::Script;
 
+use bitcoin::taproot::TaprootSpendInfo;
 use bitcoin::OutPoint;
 use bitcoin::ScriptBuf;
 use bitcoin::Transaction;
 use bitcoin::Witness;
 use bitcoin::{Address, Network};
 use bitcoin::{TxIn, TxOut};
+use bitcoincore_rpc::bitcoincore_rpc_json::EstimateMode;
+use bitcoincore_rpc::bitcoincore_rpc_json::EstimateSmartFeeResult;
 use bitcoincore_rpc::Auth;
 use bitcoincore_rpc::Client as RpcClient;
 use bitcoincore_rpc::Error;
@@ -50,6 +53,8 @@ pub enum BitcoinError {
     ReadNoDataErr,
     GetBlockErr,
     GetBlockchainInfoErr,
+    RpcError(bitcoincore_rpc::Error),
+    ScriptError,
 }
 
 impl fmt::Display for BitcoinError {
@@ -68,7 +73,16 @@ impl fmt::Display for BitcoinError {
             BitcoinError::ReadNoDataErr => write!(f, "Read no data in tx error"),
             BitcoinError::GetBlockErr => write!(f, "Get block error"),
             BitcoinError::GetBlockchainInfoErr => write!(f, "Get blockchain info error"),
+            BitcoinError::RpcError(ref e) => write!(f, "RPC error: {}", e), // New match arm
+            BitcoinError::ScriptError => write!(f, "Script error"),
         }
+    }
+}
+
+// Implement the From trait for the conversion
+impl From<bitcoincore_rpc::Error> for BitcoinError {
+    fn from(error: bitcoincore_rpc::Error) -> Self {
+        BitcoinError::RpcError(error)
     }
 }
 
@@ -95,8 +109,8 @@ pub fn chunk_slice(slice: &[u8], chunk_size: usize) -> Vec<&[u8]> {
 
 /// Builds a Bitcoin transaction script with specific embedded data.
 /// The function creates a transaction script that starts with an `OP_FALSE`
-/// followed by an `OP_IF` structure containing some predefined data, and then
-/// embeds the provided data in chunks (of a max size of 520 bytes each).
+/// followed by an `OP_IF` structure containing some data
+/// and then splits the provided data in chunks (of a max size of 520 bytes each).
 /// # Arguments
 /// * `embedded_data` - The data to be embedded into the transaction script.
 /// # Returns
@@ -139,27 +153,10 @@ pub fn build_script(embedded_data: &[u8]) -> txscript::Builder {
 /// # Returns
 /// A `Result` which is either the generated `Address` or a `BitcoinError`.
 pub fn create_taproot_address(
-    embedded_data: &[u8],
     network: Network,
+    tap_tree: &TaprootSpendInfo,
 ) -> Result<Address, BitcoinError> {
-    // Initialize the secp256k1 context
-    let secp = &Secp256k1::<All>::new();
-
-    // Retrieve the internal private key and derive the key pair
-    let internal_pkey = PrivateKey::from_wif(INTERNAL_PRIVATE_KEY).unwrap();
-    let key_pair = KeyPair::from_secret_key(secp, &internal_pkey.inner);
-    let (x_pub_key, _) = XOnlyPublicKey::from_keypair(&key_pair);
-
-    // Construct the taproot script using the provided embedded data
-    let builder: txscript::Builder = build_script(embedded_data);
-    let pk_script = builder.as_script();
-
-    // Create the taproot tree and derive the output key for the address
-    let mut taproot_builder = TaprootBuilder::new();
-    taproot_builder = taproot_builder.add_leaf(0, pk_script.into()).unwrap();
-    let tap_tree = taproot_builder.finalize(secp, x_pub_key).unwrap();
     let output_key = tap_tree.output_key();
-
     // Generate and return the taproot address
     Ok(Address::p2tr_tweaked(output_key, network))
 }
@@ -190,6 +187,7 @@ pub fn pay_to_taproot_script(taproot_key: &XOnlyPublicKey) -> Result<ScriptBuf, 
 pub fn find_commit_idx_output_from_txid(
     txid: &Txid,
     client: &RpcClient,
+    amount: Amount,
 ) -> Result<(usize, TxOut), BitcoinError> {
     // Attempt to fetch the raw transaction using the provided `txid`
     let raw_commit = match client.get_raw_transaction(txid, None) {
@@ -207,14 +205,31 @@ pub fn find_commit_idx_output_from_txid(
 
     // Search for the desired UTXO in the transaction outputs
     for (i, out) in raw_commit.output.iter().enumerate() {
-        // Identify the output with the value 10,000 (assuming this is the fee amount)
-        if out.value == 10000 {
+        // Identify the output with the value amount (assuming this is the fee amount)
+        if out.value == amount.to_sat() {
             return Ok((i, out.clone()));
         }
     }
 
     // If no matching output is found, return an error
     Err(BitcoinError::TransactionErr)
+}
+
+fn build_taptree_from_script(script: &Script) -> Result<TaprootSpendInfo, BitcoinError> {
+    // Initialize the secp256k1 context
+    let secp = &Secp256k1::<All>::new();
+    // Derive the public key from a known private key
+    let internal_prkey = PrivateKey::from_wif(INTERNAL_PRIVATE_KEY).unwrap();
+    let internal_pub_key = internal_prkey.public_key(secp);
+    let x_pub_key: XOnlyPublicKey = XOnlyPublicKey::from(internal_pub_key.inner);
+
+    let mut taproot_builder = TaprootBuilder::new();
+    taproot_builder = taproot_builder
+        .add_leaf(0, script.into())
+        .map_err(|_| BitcoinError::ScriptError)?;
+    let tap_tree = taproot_builder.finalize(secp, x_pub_key).unwrap();
+
+    Ok(tap_tree)
 }
 
 // Relayer is a bitcoin client wrapper which provides reader and writer methods
@@ -233,6 +248,19 @@ impl Relayer {
         let client = RpcClient::new(&config.host, auth)?;
 
         Ok(Relayer { client })
+    }
+
+    pub fn generate_blocks(&self, number_of_blocks: u32) -> Result<(), BitcoinError> {
+        // Get a new address for the mining reward
+        let address: String = self.client.call("getnewaddress", &[])?;
+
+        // Mine the blocks
+        let _blocks: Vec<String> = self.client.call(
+            "generatetoaddress",
+            &[number_of_blocks.into(), address.into()],
+        )?;
+
+        Ok(())
     }
 
     // close shuts down the client.
@@ -260,11 +288,10 @@ impl Relayer {
     /// # Returns
     ///
     /// A `Result` which is either the transaction ID of the commit, or a `BitcoinError`.
-    pub fn commit_tx(&self, addr: &Address) -> Result<Txid, BitcoinError> {
+    pub fn commit_tx(&self, addr: &Address, amount: Amount) -> Result<Txid, BitcoinError> {
         match addr.address_type() {
             Some(AddressType::P2tr) => {
                 // fee to cover the cost
-                let amount = Amount::from_btc(0.0001).map_err(|_| BitcoinError::BadAmount)?;
                 let hash: Txid = self
                     .client
                     .send_to_address(
@@ -274,8 +301,8 @@ impl Relayer {
                         None,
                         Some(false),
                         Some(true),
-                        None,
-                        None,
+                        Some(1),
+                        Some(EstimateMode::Conservative),
                     )
                     .map_err(|err| {
                         eprintln!("Error: {:?}", err);
@@ -300,29 +327,16 @@ impl Relayer {
     /// A `Result` which is either the transaction ID of the reveal or a `BitcoinError`.
     pub fn reveal_tx(
         &self,
-        embedded_data: &[u8],
         commit_hash: &Txid,
+        amount: Amount,
+        pk_script: &Script,
+        tap_tree: TaprootSpendInfo,
+        dust: u64,
     ) -> Result<Txid, BitcoinError> {
         // Retrieve the index and output of the commit transaction
         let (commit_idx, commit_output) =
-            find_commit_idx_output_from_txid(commit_hash, &self.client).unwrap();
+            find_commit_idx_output_from_txid(commit_hash, &self.client, amount.clone()).unwrap();
 
-        // Initialize the secp256k1 context
-        let secp = &Secp256k1::<All>::new();
-
-        // Derive the public key from a known private key
-        let internal_prkey = PrivateKey::from_wif(INTERNAL_PRIVATE_KEY).unwrap();
-        let internal_pub_key = internal_prkey.public_key(secp);
-        let x_pub_key: XOnlyPublicKey = XOnlyPublicKey::from(internal_pub_key.inner);
-
-        // Create the taproot script using the embedded data
-        let builder: txscript::Builder = build_script(embedded_data);
-        let pk_script = builder.as_script();
-
-        // Construct the Taproot tree
-        let mut taproot_builder = TaprootBuilder::new();
-        taproot_builder = taproot_builder.add_leaf(0, pk_script.into()).unwrap();
-        let tap_tree = taproot_builder.finalize(secp, x_pub_key).unwrap();
         let output_key = tap_tree.output_key();
 
         // Prepare the reveal transaction
@@ -345,9 +359,9 @@ impl Relayer {
         let p2tr_script = pay_to_taproot_script(&output_key.to_inner()).unwrap();
         assert_eq!(p2tr_script, commit_output.script_pubkey);
 
-        // Define the transaction's output
+        // Define the transaction's output = this is what is left after the fees
         let tx_out = TxOut {
-            value: 1000, // in satoshi
+            value: dust, // in satoshi
             script_pubkey: p2tr_script,
         };
         tx.output.push(tx_out);
@@ -403,11 +417,17 @@ impl Relayer {
             if let Some(wit_data) = input.witness.second_to_last() {
                 // Extract data from the witness
                 if let Some(mut extracted_data) = extract_push_data(wit_data.to_vec()) {
+                    // Check for the "bark" protocol identifier
+                    if extracted_data.starts_with(b"bark") {
+                        // Remove the "bark" identifier
+                        extracted_data.drain(0..4);
+                    }
                     data.append(&mut extracted_data);
                 }
             }
         }
 
+        log::info!("Data retrieved from DA Layer: {:?}", data);
         Ok(data)
     }
 
@@ -449,7 +469,7 @@ impl Relayer {
                 }
             }
         }
-
+        log::info!("Data retrieved from DA Layer: {:?}", data);
         Ok(data)
     }
 
@@ -463,7 +483,12 @@ impl Relayer {
     ///
     /// A `Result` containing the transaction ID of the reveal transaction or
     /// a `BitcoinError` if something went wrong.
-    pub fn write(&self, data: &[u8]) -> Result<Txid, BitcoinError> {
+    pub fn write(
+        &self,
+        data: &[u8],
+        fees_multilicator: f64,
+        dust: u64,
+    ) -> Result<Txid, BitcoinError> {
         // Retrieve blockchain information
         let blockchain_info = self
             .client
@@ -478,21 +503,61 @@ impl Relayer {
         let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
         data_with_id.extend_from_slice(data);
 
-        // Create a taproot address with the data included in the script
-        let address = create_taproot_address(&data_with_id, network)?;
+        log::info!("Data with protocol ID: {:?}", data_with_id);
 
+        // build the script embedding the data
+        let builder: txscript::Builder = build_script(&data_with_id);
+        let script = builder.as_script();
+
+        let tap_tree = build_taptree_from_script(script)?;
+        // Create a taproot address with the data included in the script
+        let address = create_taproot_address(network, &tap_tree)?;
+
+        let estimated_fees = self.get_fees()?.fee_rate;
+
+        // Calculate the amount to be sent to the taproot address
+        let control_block = tap_tree
+            .control_block(&((script.into()), LeafVersion::TapScript))
+            .ok_or(BitcoinError::ControlBlockErr)
+            .unwrap();
+
+        let script_size: u64 = script.len().try_into().unwrap();
+        let control_block_size: u64 = control_block.serialize().len().try_into().unwrap();
+        let witness_size: u64 = script_size + control_block_size;
+        let size = 100 + witness_size;
+        let weight = (size - witness_size) * 3 + size;
+        let vsize: f64 = (weight / 4) as f64;
+
+        log::info!("Tx Vsize in kvB: {:?}", vsize / 1000.0);
+
+        let computed_fees: f64 =
+            (vsize / 1000.0) * (estimated_fees.unwrap().to_sat() as f64) * fees_multilicator;
+
+        let amount: Amount =
+            Amount::from_sat(dust) + Amount::from_sat(computed_fees.round() as u64);
+
+        log::info!("Commit amount: {:?}", amount);
         // Commit a transaction to create the UTXO with the associated fees
-        let commit_hash = self.commit_tx(&address)?;
+        let commit_hash = self.commit_tx(&address, amount)?;
+
+        log::info!("Commit transaction hash: {:?}", commit_hash);
 
         // Spend the UTXO, revealing the script and, consequently, the data
-        let reveal_hash = self.reveal_tx(&data_with_id, &commit_hash)?;
+        let reveal_hash = self.reveal_tx(&commit_hash, amount, script, tap_tree, dust)?;
 
-        println!(
-            "State diff written in commit_hash: {:?} and reveal_hash: {:?}",
-            commit_hash, reveal_hash
-        );
+        log::info!("Reveal transaction hash: {:?}", reveal_hash);
 
         Ok(reveal_hash)
+    }
+
+    pub fn get_fees(&self) -> Result<EstimateSmartFeeResult, BitcoinError> {
+        let estimated_fees = self
+            .client
+            .estimate_smart_fee(1, Some(EstimateMode::Conservative));
+        match estimated_fees {
+            Ok(fees) => Ok(fees),
+            Err(err) => Err(BitcoinError::RpcError(err)),
+        }
     }
 }
 
@@ -523,8 +588,10 @@ impl Config {
 /// An `Option` containing the extracted data as a `Vec<u8>` if the required pattern was found,
 /// otherwise `None`.
 pub fn extract_push_data(pk_script: Vec<u8>) -> Option<Vec<u8>> {
-    let node_info =
-        NodeInfo::new_leaf_with_ver(ScriptBuf::from_bytes(pk_script), LeafVersion::TapScript);
+    let node_info = NodeInfo::new_leaf_with_ver(
+        ScriptBuf::from_bytes(pk_script.clone()),
+        LeafVersion::TapScript,
+    );
 
     let tap_tree_result = TapTree::try_from(node_info);
 
@@ -569,7 +636,10 @@ pub fn extract_push_data(pk_script: Vec<u8>) -> Option<Vec<u8>> {
             }
         }
     } else {
-        panic!("extract_push_data: failed to get tap tree");
+        log::error!(
+            "extract_push_data: failed to get tap tree from pk_script: {:?}",
+            pk_script
+        );
     }
     None
 }
