@@ -69,6 +69,7 @@ mod tests {
     use bitcoin::secp256k1::{All, Secp256k1};
     use bitcoin::taproot::LeafVersion;
     use bitcoin::taproot::TaprootBuilder;
+    use bitcoin::Amount;
     use bitcoin::BlockHash;
     use bitcoin::OutPoint;
     use bitcoin::ScriptBuf;
@@ -85,7 +86,7 @@ mod tests {
     const NODE_IP: &str = "localhost:8332";
 
     #[cfg(all(feature = "signet", not(feature = "regtest")))]
-    const NODE_IP: &str = "127.0.0.1:38332";
+    const NODE_IP: &str = "141.136.35.8:38332";
 
     #[cfg(all(feature = "regtest", feature = "signet"))]
     compile_error!(
@@ -95,6 +96,19 @@ mod tests {
     // If neither feature is active, default to regnet.
     #[cfg(not(any(feature = "regtest", feature = "signet")))]
     const NODE_IP: &str = "localhost:8332";
+
+    #[test]
+    fn test_get_fees() {
+        let relayer = Relayer::new(&Config::new(
+            NODE_IP.to_owned(),
+            "rpcuser".to_owned(),
+            "rpcpass".to_owned(),
+        ))
+        .unwrap();
+        let fees = relayer.get_fees();
+        assert!(fees.is_ok());
+        assert!(fees.unwrap().fee_rate.is_some());
+    }
 
     #[test]
     fn test_get_bytes_from_file() {
@@ -305,7 +319,7 @@ mod tests {
         taproot_builder = taproot_builder.add_leaf(0, pk_script.into()).unwrap();
         let tap_tree = taproot_builder.finalize(secp, x_pub_key).unwrap();
         let output_key = tap_tree.output_key();
-        match create_taproot_address(embedded_data, network) {
+        match create_taproot_address(network, &tap_tree) {
             Ok(address) => {
                 assert!(
                     address.payload.matches_script_pubkey(
@@ -339,8 +353,8 @@ mod tests {
             Err(e) => panic!("load_statediff_from_file failed with error: {:?}", e),
         };
         let embedded_data = get_bytes_from_state_diff(&statediff);
-        // let network = Network::Regtest; // Change this as necessary.
-        let network = Network::Signet;
+        let network = Network::Regtest; // Change this as necessary.
+                                        // let network = Network::Signet;
 
         let secp = &Secp256k1::<All>::new();
         let internal_pkey = PrivateKey::from_wif(INTERNAL_PRIVATE_KEY).unwrap();
@@ -349,13 +363,13 @@ mod tests {
         let (x_pub_key, _) = XOnlyPublicKey::from_keypair(&key_pair);
 
         let builder: txscript::Builder = build_script(&embedded_data);
-
         let pk_script = builder.as_script();
+
         let mut taproot_builder = TaprootBuilder::new();
         taproot_builder = taproot_builder.add_leaf(0, pk_script.into()).unwrap();
         let tap_tree = taproot_builder.finalize(secp, x_pub_key).unwrap();
         let output_key = tap_tree.output_key();
-        match create_taproot_address(&embedded_data, network) {
+        match create_taproot_address(network, &tap_tree) {
             Ok(address) => {
                 assert!(
                     address.payload.matches_script_pubkey(
@@ -394,15 +408,27 @@ mod tests {
             Network::Signet
         } else {
             // Handle the case where neither feature is enabled, if necessary
-            panic!("Neither regtest nor signet feature is enabled!");
+            Network::Regtest
+            // Network::Signet
         };
 
-        // let network = Network::Regtest;
-        // let network = Network::Signet;
+        // Initialize the secp256k1 context
+        let secp = &Secp256k1::<All>::new();
 
-        let test_addr: Address = create_taproot_address(embedded_data, network).unwrap();
-        println!("Test address: {}", test_addr);
-        match relayer.commit_tx(&test_addr) {
+        // Derive the public key from a known private key
+        let internal_prkey = PrivateKey::from_wif(INTERNAL_PRIVATE_KEY).unwrap();
+        let internal_pub_key = internal_prkey.public_key(secp);
+        let x_pub_key: XOnlyPublicKey = XOnlyPublicKey::from(internal_pub_key.inner);
+        // build the script embedding the data
+        let builder: txscript::Builder = build_script(embedded_data);
+        let pk_script = builder.as_script();
+        let mut taproot_builder = TaprootBuilder::new();
+        taproot_builder = taproot_builder.add_leaf(0, pk_script.into()).unwrap();
+        let tap_tree = taproot_builder.finalize(secp, x_pub_key).unwrap();
+
+        let test_addr: Address = create_taproot_address(network, &tap_tree).unwrap();
+        let amount: Amount = Amount::from_btc(0.0001).unwrap();
+        match relayer.commit_tx(&test_addr, amount) {
             Ok(txid) => {
                 println!("Commit Txid: {}", txid);
             }
@@ -418,6 +444,17 @@ mod tests {
             "rpcpass".to_owned(),
         ))
         .unwrap();
+
+        let network = if cfg!(feature = "regtest") {
+            Network::Regtest
+        } else if cfg!(feature = "signet") {
+            Network::Signet
+        } else {
+            // Handle the case where neither feature is enabled, if necessary
+            Network::Regtest
+            // Network::Signet
+        };
+
         let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
         let project_root = Path::new(&manifest_dir);
         // Build the path to the file from the project root
@@ -428,21 +465,25 @@ mod tests {
         };
         let embedded_data = get_bytes_from_state_diff(&statediff);
 
-        let network = if cfg!(feature = "regtest") {
-            Network::Regtest
-        } else if cfg!(feature = "signet") {
-            Network::Signet
-        } else {
-            // Handle the case where neither feature is enabled, if necessary
-            panic!("Neither regtest nor signet feature is enabled!");
-        };
+        // Initialize the secp256k1 context
+        let secp = &Secp256k1::<All>::new();
 
-        // let network = Network::Regtest;
-        // let network = Network::Signet;
+        // Derive the public key from a known private key
+        let internal_prkey = PrivateKey::from_wif(INTERNAL_PRIVATE_KEY).unwrap();
+        let internal_pub_key = internal_prkey.public_key(secp);
+        let x_pub_key: XOnlyPublicKey = XOnlyPublicKey::from(internal_pub_key.inner);
+        // build the script embedding the data
+        let builder: txscript::Builder = build_script(&embedded_data);
+        let pk_script = builder.as_script();
+        let mut taproot_builder = TaprootBuilder::new();
+        taproot_builder = taproot_builder.add_leaf(0, pk_script.into()).unwrap();
+        let tap_tree = taproot_builder.finalize(secp, x_pub_key).unwrap();
 
-        let test_addr: Address = create_taproot_address(&embedded_data, network).unwrap();
+        let test_addr: Address = create_taproot_address(network, &tap_tree).unwrap();
         println!("Test address: {}", test_addr);
-        match relayer.commit_tx(&test_addr) {
+        let amount: Amount = Amount::from_btc(0.00001).unwrap();
+
+        match relayer.commit_tx(&test_addr, amount) {
             Ok(txid) => {
                 println!("Commit Txid: {}", txid);
             }
@@ -471,30 +512,38 @@ mod tests {
 
         #[cfg(feature = "signet")]
         assert_eq!(network, Network::Signet);
+        // for manual testing, uncomment if necessary
+        assert_eq!(network, Network::Regtest);
 
         // append id to data
         let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
         data_with_id.extend_from_slice(embedded_data);
-        // create address with data in script
-        let address = create_taproot_address(&data_with_id, network).unwrap();
+
+        // Initialize the secp256k1 context
+        let secp = &Secp256k1::<All>::new();
+
+        // Derive the public key from a known private key
+        let internal_prkey = PrivateKey::from_wif(INTERNAL_PRIVATE_KEY).unwrap();
+        let internal_pub_key = internal_prkey.public_key(secp);
+        let x_pub_key: XOnlyPublicKey = XOnlyPublicKey::from(internal_pub_key.inner);
+        // build the script embedding the data
+        let builder: txscript::Builder = build_script(&data_with_id);
+        let pk_script = builder.as_script();
+        let mut taproot_builder = TaprootBuilder::new();
+        taproot_builder = taproot_builder.add_leaf(0, pk_script.into()).unwrap();
+        let tap_tree = taproot_builder.finalize(secp, x_pub_key).unwrap();
+
+        // create address
+        let address = create_taproot_address(network, &tap_tree).unwrap();
+        let amount: Amount = Amount::from_btc(0.0001).unwrap();
+
         // do first transaction -> commit
-        match relayer.commit_tx(&address) {
+        match relayer.commit_tx(&address, amount) {
             Ok(txid) => {
                 // from commit txid get the good utxo/output
                 let (commit_idx, commit_output) =
-                    find_commit_idx_output_from_txid(&txid, &relayer.client).unwrap();
-                // build pubkey, it is the same used to create the address
-                let secp = &Secp256k1::<All>::new();
-                let internal_prkey = PrivateKey::from_wif(INTERNAL_PRIVATE_KEY).unwrap();
-                let internal_pub_key = internal_prkey.public_key(secp);
-                let x_pub_key: XOnlyPublicKey = XOnlyPublicKey::from(internal_pub_key.inner);
-                // build inscription script
-                let builder: txscript::Builder = build_script(&data_with_id);
-                let pk_script = builder.as_script();
-                // build taproot tree
-                let mut taproot_builder = TaprootBuilder::new();
-                taproot_builder = taproot_builder.add_leaf(0, pk_script.into()).unwrap();
-                let tap_tree = taproot_builder.finalize(secp, x_pub_key).unwrap();
+                    find_commit_idx_output_from_txid(&txid, &relayer.client, amount).unwrap();
+
                 let output_key = tap_tree.output_key();
                 // build reveal transaction
                 let mut tx = Transaction {
@@ -516,7 +565,7 @@ mod tests {
                 assert_eq!(p2tr_script, commit_output.script_pubkey);
                 // min relay fee and build output
                 let tx_out = TxOut {
-                    value: 1000, // in satoshi
+                    value: 500, // in satoshi
                     script_pubkey: p2tr_script,
                 };
                 tx.output.push(tx_out);
@@ -572,11 +621,28 @@ mod tests {
         #[cfg(feature = "signet")]
         assert_eq!(network, Network::Signet);
 
+        // for manual testing, uncomment if necessary
+        assert_eq!(network, Network::Regtest);
+
         // append id to data
         let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
         data_with_id.extend_from_slice(embedded_data);
+        // Initialize the secp256k1 context
+        let secp = &Secp256k1::<All>::new();
+
+        // Derive the public key from a known private key
+        let internal_prkey = PrivateKey::from_wif(INTERNAL_PRIVATE_KEY).unwrap();
+        let internal_pub_key = internal_prkey.public_key(secp);
+        let x_pub_key: XOnlyPublicKey = XOnlyPublicKey::from(internal_pub_key.inner);
+        // build the script embedding the data
+        let builder: txscript::Builder = build_script(&data_with_id);
+        let script = builder.as_script();
+        let mut taproot_builder = TaprootBuilder::new();
+        taproot_builder = taproot_builder.add_leaf(0, script.into()).unwrap();
+        let tap_tree = taproot_builder.finalize(secp, x_pub_key).unwrap();
+
         // create address with data in script
-        let address = create_taproot_address(&data_with_id, network).unwrap();
+        let address = create_taproot_address(network, &tap_tree).unwrap();
 
         // ================================================
         // When: a commit transaction is made, followed by a reveal transaction
@@ -585,10 +651,11 @@ mod tests {
         // ===============================================
         // Then: assert the success of the reveal operation after a successful commit
         // ===============================================
+        let amount: Amount = Amount::from_btc(0.00001).unwrap();
 
         // do first transaction -> commit
-        match relayer.commit_tx(&address) {
-            Ok(txid) => match relayer.reveal_tx(&data_with_id, &txid) {
+        match relayer.commit_tx(&address, amount) {
+            Ok(txid) => match relayer.reveal_tx(&txid, amount, script, tap_tree, 500) {
                 Ok(txid) => {
                     println!("Reveal Txid: {}", txid);
                     println!("Successful Reveal");
@@ -635,11 +702,29 @@ mod tests {
         #[cfg(feature = "signet")]
         assert_eq!(network, Network::Signet);
 
+        // for manual testing, uncomment if necessary
+        // assert_eq!(network, Network::Regtest);
+
         // append id to data
         let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);
         data_with_id.extend_from_slice(&embedded_data);
+
+        // Initialize the secp256k1 context
+        let secp = &Secp256k1::<All>::new();
+
+        // Derive the public key from a known private key
+        let internal_prkey = PrivateKey::from_wif(INTERNAL_PRIVATE_KEY).unwrap();
+        let internal_pub_key = internal_prkey.public_key(secp);
+        let x_pub_key: XOnlyPublicKey = XOnlyPublicKey::from(internal_pub_key.inner);
+        // build the script embedding the data
+        let builder: txscript::Builder = build_script(&data_with_id);
+        let script = builder.as_script();
+        let mut taproot_builder = TaprootBuilder::new();
+        taproot_builder = taproot_builder.add_leaf(0, script.into()).unwrap();
+        let tap_tree = taproot_builder.finalize(secp, x_pub_key).unwrap();
+
         // create address with data in script
-        let address = create_taproot_address(&data_with_id, network).unwrap();
+        let address = create_taproot_address(network, &tap_tree).unwrap();
 
         // ================================================
         // When: a commit transaction is made, followed by a reveal transaction
@@ -648,12 +733,13 @@ mod tests {
         // ===============================================
         // Then: assert the success of the reveal operation after a successful commit
         // ===============================================
+        let amount: Amount = Amount::from_btc(0.00016).unwrap();
 
         // do first transaction -> commit
-        match relayer.commit_tx(&address) {
+        match relayer.commit_tx(&address, amount) {
             Ok(txid) => {
                 println!("Commit Txid: {}", txid);
-                match relayer.reveal_tx(&data_with_id, &txid) {
+                match relayer.reveal_tx(&txid, amount, script, tap_tree, 400) {
                     Ok(txid) => {
                         println!("Reveal Txid: {}", txid);
                     }
@@ -665,13 +751,15 @@ mod tests {
     }
 
     #[test]
-    fn test_write() {
+    fn test_writee() {
         // ===============================
         // Given: a configured Bitcoin relayer on the REGNET network
         // ===============================
 
         // Set up embedded data and relayer configuration
         let embedded_data = b"Hello, world!";
+
+        // let embedded_data = b"";
         let relayer = Relayer::new(&Config::new(
             NODE_IP.to_owned(),
             "rpcuser".to_owned(),
@@ -679,7 +767,6 @@ mod tests {
         ))
         .unwrap();
 
-        // get network, should be regtest
         let blockchain_info = relayer.client.get_blockchain_info().unwrap();
         let network_name = &blockchain_info.chain;
         let _network = Network::from_core_arg(network_name)
@@ -692,11 +779,14 @@ mod tests {
         #[cfg(feature = "regtest")]
         assert_eq!(_network, Network::Regtest);
 
+        // for manual testing, uncomment if necessary
+        assert_eq!(_network, Network::Regtest);
+
         // ==================================
         // When: data is written to the network
         // ==================================
 
-        let write_result = relayer.write(embedded_data);
+        let write_result = relayer.write(embedded_data, 1.75, 400);
 
         // ==========================================
         // Then: assert successful writing operation
@@ -751,7 +841,7 @@ mod tests {
         // When: data is written to the network
         // ==================================
 
-        let write_result = relayer.write(&embedded_data);
+        let write_result = relayer.write(&embedded_data, 1.0, 400);
 
         // ==========================================
         // Then: assert successful writing operation
