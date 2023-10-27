@@ -488,16 +488,17 @@ impl Relayer {
         data: &[u8],
         fees_multilicator: f64,
         dust: u64,
+        network: Network,
     ) -> Result<Txid, BitcoinError> {
         // Retrieve blockchain information
-        let blockchain_info = self
-            .client
-            .get_blockchain_info()
-            .map_err(|_| BitcoinError::GetBlockchainInfoErr)?;
+        // let blockchain_info = self
+        //     .client
+        //     .get_blockchain_info()
+        //     .map_err(|_| BitcoinError::GetBlockchainInfoErr)?;
 
-        // Convert network name to Network type
-        let network = Network::from_core_arg(&blockchain_info.chain)
-            .map_err(|_| BitcoinError::InvalidNetwork)?;
+        // // Convert network name to Network type
+        // let network = Network::from_core_arg(&blockchain_info.chain)
+        //     .map_err(|_| BitcoinError::InvalidNetwork)?;
 
         // Create data payload with protocol ID and actual data
         let mut data_with_id = Vec::from(&PROTOCOL_ID[..]);

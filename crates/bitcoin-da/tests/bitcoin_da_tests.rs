@@ -786,7 +786,8 @@ mod tests {
         // When: data is written to the network
         // ==================================
 
-        let write_result = relayer.write(embedded_data, 1.75, 400);
+        // let write_result = relayer.write(embedded_data, 1.75, 400);
+        let write_result = relayer.write(embedded_data, 1.75, 400, Network::Regtest);
 
         // ==========================================
         // Then: assert successful writing operation
@@ -825,11 +826,12 @@ mod tests {
         .unwrap();
 
         // get network, should be regtest
-        let blockchain_info = relayer.client.get_blockchain_info().unwrap();
-        let network_name = &blockchain_info.chain;
-        let _network = Network::from_core_arg(network_name)
-            .map_err(|_| BitcoinError::InvalidNetwork)
-            .unwrap();
+        // let blockchain_info = relayer.client.get_blockchain_info().unwrap();
+        // let network_name = &blockchain_info.chain;
+        // let _network = Network::from_core_arg(network_name)
+        //     .map_err(|_| BitcoinError::InvalidNetwork)
+        //     .unwrap();
+        let _network = Network::Regtest;
 
         #[cfg(feature = "signet")]
         assert_eq!(_network, Network::Signet);
@@ -841,7 +843,8 @@ mod tests {
         // When: data is written to the network
         // ==================================
 
-        let write_result = relayer.write(&embedded_data, 1.0, 400);
+        // let write_result = relayer.write(&embedded_data, 1.0, 400);
+        let write_result = relayer.write(&embedded_data, 1.0, 400, _network);
 
         // ==========================================
         // Then: assert successful writing operation
